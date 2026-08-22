@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
 """Repository validator for openai-work-codex-regulator.
 
-Checks (v1.1):
+Checks (v1.2):
  1. required repository files exist;
  2. VERSION is major.minor;
  3. README reflects the current VERSION;
  4. CHANGELOG contains a heading for the current VERSION;
  5. regression tests are numbered contiguously;
- 6. regression test count >= 50;
+ 6. regression test count >= 60;
  7. expected normative references exist;
- 8. mandatory v1.1 invariants are present in SKILL.md;
- 9. SOURCE_MAP contains a verification date;
-10. mandatory first-party OpenAI sources are listed in SOURCE_MAP;
-11. no stale hardcoded model names in normative logic
-    (SOURCE_MAP / tests / changelog are allowed historical/source context);
-12. basic secret scanning;
-13. all tracked filenames are ASCII (ZIP portability).
+ 8. mandatory core invariants are present in SKILL.md;
+ 9. mandatory v1.2 model-router invariants are present in reference 08;
+10. SOURCE_MAP contains a verification date;
+11. mandatory first-party OpenAI sources are listed in SOURCE_MAP;
+12. no stale hardcoded model names in normative logic
+    (source/model reference, tests and changelog are allowed contextual locations);
+13. basic secret scanning;
+14. all tracked filenames are ASCII (ZIP portability).
 """
 from pathlib import Path
 import re
@@ -41,6 +42,7 @@ REQUIRED = [
     "references/05_WORK_BROWSER_AND_ACTIONS.md",
     "references/06_CODEX_TECHNICAL_WORK.md",
     "references/07_FAILURES_AND_RECOVERY.md",
+    "references/08_MODEL_TIER_ROUTING.md",
     "references/SOURCE_MAP.md",
     "tests/TEST_CASES.md",
     ".github/CODEOWNERS",
@@ -59,7 +61,6 @@ SKILL_INVARIANTS = [
     "SURFACE: CODEX",
     "STOP AFTER REPORT",
     "git add .",
-    # v1.1 invariants
     "CHAT_BOUNDED_WEB",
     "WHY_AGENTIC",
     "VALUE_OUTPUT",
@@ -73,19 +74,35 @@ SKILL_INVARIANTS = [
     "Downloading ≠ permission to execute",
 ]
 
+MODEL_ROUTER_INVARIANTS = [
+    "MODEL_AVAILABILITY_SNAPSHOT",
+    "MODEL_TIER=<LUNA|TERRA|SOL|OTHER|UNKNOWN>",
+    "WHY_THIS_MODEL",
+    "FALLBACK_MODEL",
+    "LUNA — economy / high-volume routine work",
+    "TERRA — default balanced Work/Codex tier",
+    "SOL — quality-first / consequential synthesis",
+    "WHY_MAX",
+    "WHY_ULTRA",
+]
+
 REQUIRED_SOURCES = [
     "https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex",
     "https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan",
     "https://help.openai.com/en/articles/20001106-codex-rate-card",
     "https://help.openai.com/en/articles/12642688",
     "https://help.openai.com/en/articles/20001277-using-the-built-in-browser-in-the-chatgpt-desktop-app",
+    "https://help.openai.com/en/articles/20001354-gpt-5-6-in-chatgpt",
+    "https://help.openai.com/en/articles/20001415",
 ]
 
-MIN_TESTS = 50
+MIN_TESTS = 60
 
-# Files where model names are allowed as historical/source/test context.
+# Files where generation-specific model names are allowed as dated
+# source/test/changelog context rather than permanent router hardcodes.
 MODEL_NAME_ALLOWED = {
     "references/SOURCE_MAP.md",
+    "references/08_MODEL_TIER_ROUTING.md",
     "tests/TEST_CASES.md",
     "CHANGELOG.md",
 }
@@ -144,13 +161,19 @@ if numbers:
 else:
     errors.append("no numbered tests found in tests/TEST_CASES.md")
 
-# 8. SKILL.md invariants
+# 8. SKILL.md core invariants
 skill = read("SKILL.md")
 for needle in SKILL_INVARIANTS:
     if needle not in skill:
         errors.append(f"SKILL.md missing required rule: {needle}")
 
-# 9 + 10. SOURCE_MAP verification date and first-party sources
+# 9. v1.2 model-router invariants
+model_router = read("references/08_MODEL_TIER_ROUTING.md")
+for needle in MODEL_ROUTER_INVARIANTS:
+    if needle not in model_router:
+        errors.append(f"model tier router missing required rule: {needle}")
+
+# 10 + 11. SOURCE_MAP verification date and first-party sources
 source_map = read("references/SOURCE_MAP.md")
 if not re.search(r"\*\*Verified:\*\*\s*\d{4}-\d{2}-\d{2}", source_map):
     errors.append("SOURCE_MAP.md missing verification date")
@@ -158,7 +181,7 @@ for url in REQUIRED_SOURCES:
     if url not in source_map:
         errors.append(f"SOURCE_MAP missing official source: {url}")
 
-# 11. no stale hardcoded model names in normative logic
+# 12. no stale hardcoded model names in normative logic
 for path in sorted(ROOT.rglob("*")):
     if not path.is_file() or path.suffix != ".md":
         continue
@@ -170,7 +193,7 @@ for path in sorted(ROOT.rglob("*")):
         if re.search(pattern, text):
             errors.append(f"{rel} contains {label} (move to SOURCE_MAP/tests context)")
 
-# 12. basic secret scanning
+# 13. basic secret scanning
 scan_targets = []
 for glob in SECRET_SCAN_GLOBS:
     scan_targets.extend(ROOT.rglob(glob))
@@ -182,7 +205,7 @@ for path in sorted(set(scan_targets)):
         if re.search(pattern, text):
             errors.append(f"{path.relative_to(ROOT)} contains {label}")
 
-# 13. ASCII filenames for portability
+# 14. ASCII filenames for portability
 for path in sorted(ROOT.rglob("*")):
     rel = path.relative_to(ROOT).as_posix()
     if rel.startswith(".git/") or not path.is_file():
