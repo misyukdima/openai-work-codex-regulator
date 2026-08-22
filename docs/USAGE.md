@@ -4,7 +4,7 @@
 
 ```text
 Используй openai-work-codex-regulator.
-Определи, нужен ли ChatGPT Work или Codex, и подготовь один bounded pass без дублирования общего agentic pool.
+Определи, нужен ли ChatGPT Work или Codex, выбери минимально достаточный capability tier/effort и подготовь один bounded pass без дублирования общего agentic pool.
 
 Задача: <описание>
 ```
@@ -22,6 +22,31 @@ VALUE_OUTPUT=<проверяемый результат gate>
 
 Если пользователь после одного quota-saving предупреждения явно настаивает на Work — фиксируется `USER_SURFACE_OVERRIDE=YES`, и выбор уважается при пройденных safety/quota gates.
 
+## 1.2. Model tier router
+
+Нормативная модель выбора описана в `references/08_MODEL_TIER_ROUTING.md`.
+
+Для cost-sensitive class 2–4 pass фиксировать:
+
+```text
+MODEL_AVAILABILITY_SNAPSHOT=<UI/source/time|unknown>
+MODEL_TIER=<LUNA|TERRA|SOL|OTHER|UNKNOWN>
+EFFORT=<light|medium|high|extra-high|max|ultra|other|unknown>
+WHY_THIS_MODEL=<one bounded reason>
+FALLBACK_MODEL=<tier/effort|none|unknown>
+MODEL_COST_POSTURE=<ECONOMY|BALANCED|QUALITY_FIRST>
+```
+
+Базовая маршрутизация:
+
+- `LUNA` — high-volume routine discovery/extraction/filtering, где schema даёт сильную проверку;
+- `TERRA` — default для обычного multi-source research, lead qualification, implementation/debugging;
+- `SOL` — consequential legal/security/production/final synthesis, где цена ошибки выше экономии quota.
+
+`max` требует `WHY_MAX` + `MAX_SCOPE_BOUND`. `ultra` требует фактической доступности в текущем UI, `WHY_ULTRA` и `ULTRA_MERGE_PLAN`.
+
+Конкретный generation ID не является постоянной политикой: actual model/effort берётся из текущего account/workspace UI и свежей first-party документации.
+
 ## 2. Research через ChatGPT Work
 
 ```text
@@ -36,6 +61,8 @@ Usage snapshot: <если известен>.
 ```
 
 Skill должен сформировать bounded Work prompt с `PASS_ID`, `GATE`, `MAX_RESULTS`, freshness, allowed surfaces, fact lock и `STOP AFTER REPORT`.
+
+Для обычного buyer-demand research начинать с Terra; массовый заранее структурированный extraction может быть Luna; Sol нужен только для отдельного consequential synthesis, например legal + commercial decision.
 
 ## 3. Technical implementation через Codex
 
@@ -174,7 +201,9 @@ CREDIT_ELIGIBILITY_CODEX=CONFIRMED|UNAVAILABLE|UNKNOWN
 - не отправлять в Work простой lookup или summary приложенного файла, который решает обычный Chat;
 - не использовать Work для repository implementation;
 - не использовать Codex для повторного browser research;
-- не включать Fast/Ultra ради impatience;
+- не выбирать Sol только потому, что задача важная;
+- не выбирать Luna только потому, что она дешёвая, если цена ошибки высока;
+- не включать Fast/max/Ultra ради impatience или «на всякий случай»;
 - не запускать parallel agents без независимых scopes;
 - не бороться много раз с CAPTCHA/anti-bot;
 - не создавать Schedule до измеренного manual run;

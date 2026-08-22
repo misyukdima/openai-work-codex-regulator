@@ -1,6 +1,6 @@
 # Official source map
 
-**Skill release:** 1.1  
+**Skill release:** 1.2  
 **Verified:** 2026-08-22
 
 Time-sensitive provisions are marked **[time-sensitive]**: they must be re-verified against first-party OpenAI sources or the actual account UI before being relied upon, and must never be promoted into permanent hardcoded logic.
@@ -46,7 +46,7 @@ Used in:
 
 ## Flexible credits / Auto top-up / credit eligibility
 
-Rule: supported Plus/Pro accounts can purchase credits after included usage; Auto top-up may be available; shared credits can be consumed by supported features. **[time-sensitive]** As of the verification date the official credits article states both that credits "can only be used with Codex (for Plus/Pro users only) and ChatGPT for Excel" and that auto top-up shared credits "can be used across supported features such as Codex, ChatGPT Work, and ChatGPT for Excel". The exact per-feature eligibility therefore must be confirmed in the first-party account UI and must not be assumed.
+Rule: supported Plus/Pro accounts can purchase credits after included usage; Auto top-up may be available; shared credits can be consumed by supported features. **[time-sensitive]** As of the verification date the official credits article contains feature-specific wording that can change; exact per-feature eligibility must therefore be confirmed in first-party account UI and must not be assumed.
 
 Source:
 - https://help.openai.com/en/articles/12642688
@@ -69,6 +69,42 @@ Used in:
 - `SKILL.md` section 6.4
 - `references/02_SHARED_QUOTA_AND_CREDITS.md` section 8
 
+## Model tiers / Work and Codex availability
+
+Rule: OpenAI defines `Sol`, `Terra`, and `Luna` as capability tiers: Sol is flagship, Terra is balanced/lower-cost for everyday work, and Luna is the fastest/lowest-cost tier. OpenAI states that the generation number and the Sol/Terra/Luna tier names are separate concepts, so tier names can be used as durable routing roles while exact generation IDs remain time-sensitive. **[time-sensitive]**
+
+Sources:
+- https://help.openai.com/en/articles/20001354-gpt-5-6-in-chatgpt
+- https://openai.com/index/gpt-5-6/
+
+As of 2026-08-22 the official availability page says ChatGPT Work exposes Sol, Terra and Luna to Plus/Pro/Business/Enterprise, subject to rollout/workspace controls. Current account UI wins if availability differs.
+
+Used in:
+- `SKILL.md` section 10 (generic minimal-sufficient-model rule)
+- `references/08_MODEL_TIER_ROUTING.md`
+- `tests/TEST_CASES.md` tests 51–60
+
+Operational consequence:
+- route by capability tier and task profile, not by a permanent generation ID;
+- if a recommended tier is unavailable in current UI, use an explicit sufficient fallback or PREPARE when risk/cost changes materially.
+
+## Model/token cost and relative tier economics
+
+Rule: current first-party rate cards show materially different token/credit cost across Sol, Terra and Luna; actual cost depends on model, input/cached/output tokens and features. **[time-sensitive]**
+
+Sources:
+- https://help.openai.com/en/articles/20001415
+- https://help.openai.com/en/articles/20001106-codex-rate-card
+
+Used in:
+- `references/08_MODEL_TIER_ROUTING.md`
+- `SKILL.md` sections 6, 8, 10
+
+Operational consequence:
+- use the cheapest tier that is sufficient for the gate;
+- rate cards justify relative cost posture but never substitute for the user's first-party usage snapshot;
+- do not copy current numeric rates into permanent operational thresholds.
+
 ## Token-based Codex rate card / Fast / reasoning
 
 Rule: current Codex credit pricing is token-based for most plans; actual spend depends on model/tokens/tools; Fast can cost more; maximum reasoning can do more work/agents. **[time-sensitive]**
@@ -78,6 +114,7 @@ Source:
 
 Used in:
 - `SKILL.md` sections 6, 10
+- `references/08_MODEL_TIER_ROUTING.md`
 
 ## Work Scheduled Tasks / approvals
 
@@ -105,13 +142,16 @@ Used in:
 
 ## Model names are stale-sensitive
 
-As of 2026-08-21, official Codex help announces GPT-5.4 and GPT-5.4 mini removal from ChatGPT-account Codex on 2026-08-31, with replacement guidance. This is intentionally NOT hardcoded into routing/model policy because model availability is time-sensitive.
+Generation-specific model names, exact effort availability, Fast/Ultra availability and rate-card values are time-sensitive. Current account UI and first-party documentation override old prompts or old releases.
 
-Source:
+Sources:
+- https://help.openai.com/en/articles/20001354-gpt-5-6-in-chatgpt
 - https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan
+- https://help.openai.com/en/articles/20001106-codex-rate-card
 
 Operational consequence:
-- use current UI/official docs instead of persistent model hardcodes.
+- keep Sol/Terra/Luna as capability-tier roles while resolving the actual generation/model from current UI;
+- do not preserve a retired generation ID because it appeared in an old prompt.
 
 ## Internal operating policies, not OpenAI product facts
 
@@ -133,6 +173,8 @@ The following are deliberate regulator policies:
 - scheduled-task runaway stop after 2–3 identical failures;
 - exact-file Git staging;
 - no `git add .`;
-- manual-run-before-schedule requirement.
+- manual-run-before-schedule requirement;
+- default model-tier routing: Luna for high-volume routine extraction, Terra as balanced default, Sol for consequential synthesis;
+- `WHY_MAX` / `WHY_ULTRA` gates before expensive reasoning escalation.
 
 They must not be described as official OpenAI limits.

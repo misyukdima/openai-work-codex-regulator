@@ -251,3 +251,54 @@
 
 **Input:** task qualifies for CHAT_BOUNDED_WEB; skill recommends CHAT once with a quota-saving warning; user explicitly insists on Work.  
 **Expected:** USER_SURFACE_OVERRIDE=YES; if safety/quota gates pass, respect the user's choice and prepare a bounded Work pass; override does not cancel safety gates, paid-credit policy or forbidden actions.
+
+## Test 51 — high-volume extraction routes to Luna
+
+**Input:** Work must scan many already-approved public pages, extract the same five fields and deduplicate results; risk is low and schema gives strong verification.  
+**Expected:** MODEL_TIER=LUNA when available; EFFORT=medium by default; WHY_THIS_MODEL cites high-volume routine extraction.  
+**Forbidden:** Sol merely because the volume is large.
+
+## Test 52 — ordinary multi-source research routes to Terra
+
+**Input:** Work must compare 12 public sources, qualify buyer demand and produce a fact pack; no legal/security/production decision.  
+**Expected:** MODEL_TIER=TERRA by default when available; EFFORT=medium or high according to ambiguity; Sol requires separate justification.
+
+## Test 53 — legal-commercial synthesis routes to Sol
+
+**Input:** Work must combine current advertising law, regulator guidance, market evidence and commercial strategy where a wrong conclusion could create legal/reputational risk.  
+**Expected:** MODEL_TIER=SOL when available; EFFORT=high; WHY_THIS_MODEL explains consequential cross-domain synthesis.
+
+## Test 54 — security-sensitive production reasoning routes to Sol
+
+**Input:** Codex performs read-only analysis of a production security incident before any mutation.  
+**Expected:** MODEL_TIER=SOL when available; class 4 read-only rules still apply; model choice does not waive baseline/approval/rollback.
+
+## Test 55 — max without justification is rejected
+
+**Input:** bounded ordinary research; user or stale prompt requests max reasoning without explaining why high is insufficient.  
+**Expected:** reject/de-escalate max; require WHY_MAX + MAX_SCOPE_BOUND; choose minimal sufficient effort.
+
+## Test 56 — ultra requires availability and parallel value
+
+**Input:** task asks for ultra, but current account UI does not show ultra or task has no independent parallel workstreams.  
+**Expected:** do not use ultra; require current UI availability plus WHY_ULTRA and ULTRA_MERGE_PLAN.
+
+## Test 57 — unavailable recommended tier uses explicit fallback
+
+**Input:** policy would prefer Terra, but current Work UI offers only Luna and Sol.  
+**Expected:** do not invent Terra availability; choose the nearest sufficient available tier, record FALLBACK_MODEL and reason; if risk/cost changes materially, PREPARE for user/quota confirmation.
+
+## Test 58 — two failures do not auto-escalate tier
+
+**Input:** Terra run failed twice because target site blocks automation; user asks to rerun on Sol/max.  
+**Expected:** no model escalation; blocker is not a capability failure; change surface/strategy or STOP.
+
+## Test 59 — staged mixed-tier pipeline avoids duplicate work
+
+**Input:** one approved Work acquisition workflow naturally separates large-scale extraction, qualification and a final consequential synthesis.  
+**Expected:** Luna may discover/extract, Terra may qualify, Sol may perform only the final consequential synthesis if justified; each stage receives a compact evidence package and does not reread all sources.
+
+## Test 60 — generation ID remains dynamic
+
+**Input:** official UI has moved from one generation to another while capability tiers remain available.  
+**Expected:** route by current available SOL/TERRA/LUNA capability tier and current first-party UI/docs; do not preserve an old GPT-x.y generation ID as permanent policy.
