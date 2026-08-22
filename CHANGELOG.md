@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2 — 2026-08-22
+
+Model-tier routing release focused on quota efficiency and explicit model/effort selection for ChatGPT Work and Codex.
+
+- Added normative `references/08_MODEL_TIER_ROUTING.md` with capability-tier routing based on durable `Luna / Terra / Sol` roles rather than permanent generation IDs.
+- Added normalized `MODEL_AVAILABILITY_SNAPSHOT`, `MODEL_TIER`, `EFFORT`, `WHY_THIS_MODEL`, `FALLBACK_MODEL` and `MODEL_COST_POSTURE` fields.
+- Added routing defaults: Luna for high-volume routine discovery/extraction, Terra as the balanced default for most multi-source research and implementation, Sol for consequential legal/security/production/final synthesis.
+- Added explicit `WHY_MAX` / `MAX_SCOPE_BOUND` and `WHY_ULTRA` / `ULTRA_MERGE_PLAN` gates before expensive reasoning escalation.
+- Added escalation/de-escalation rules that distinguish model-capability failures from blockers such as CAPTCHA, unavailable data or bad scope.
+- Added staged mixed-tier policy (`Luna → Terra → Sol only if justified`) without duplicate rereading of the same evidence.
+- Re-verified current first-party model availability and rate-card sources on 2026-08-22; account/workspace UI remains authoritative for actual model/effort availability.
+- Added regression tests 51–60 covering extraction, ordinary research, legal/security synthesis, max/ultra, fallbacks, blockers and generation-independent routing.
+- Validator now requires the model-routing reference, its core invariants, the new first-party model/rate-card sources and at least 60 contiguous regression tests.
+- Updated README and usage guide for v1.2 model-tier operation.
+
 ## 1.1 — 2026-08-22
 
 Quota-saving routing, security and release-hardening release. Architecture of v1.0 preserved.
