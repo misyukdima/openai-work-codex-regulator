@@ -1,4 +1,4 @@
-# Architecture
+# Architecture v2.0
 
 ## Decision pipeline
 
@@ -6,7 +6,7 @@
 User goal
   ↓
 Does it need an agentic run?
-  ├─ no → CHAT / class 0
+  ├─ no → CHAT / class 0 / CHAT_BOUNDED_WEB
   └─ yes
        ↓
 Task class 1–4
@@ -17,75 +17,141 @@ Primary surface
   └─ OTHER
        ↓
 WHY_AGENTIC / VALUE_OUTPUT
-  (why ordinary Chat is insufficient)
        ↓
-Pass identity
-  PASS_ID / ROLE / GATE
+PASS_ID / ROLE / GATE
        ↓
 Project runway
        ↓
-Shared usage snapshot
-  5h / weekly / credits / reset / paid-credit policy
-  freshness requirement depends on class
+Allowance domain
+  WORK_CODEX ≠ CHAT_PRO ≠ API
        ↓
-Capability / permission state
-  Work Cloud/Local · Codex Local · browser · network
+Shared usage / credits / reset
        ↓
-Credit eligibility
-  authorization ≠ feature eligibility
+Capability & permission state
        ↓
-Model & execution policy
-  minimal sufficient / no unnecessary Fast/Ultra
+Model router
+  ├─ TIERED → Luna / Terra / Sol
+  └─ ASTRA  → exceptional admission contract
+       ↓
+If ASTRA:
+  ASTRA_JUSTIFIED
+  ASTRA_SCOPE_BOUND
+  client readiness
+  steering policy
+  safety-pause policy
+  cyber authorization when applicable
        ↓
 Scope & safety
-  read / write / external action / approval / rollback
+  read / write / action / approval / rollback
        ↓
 Run
        ↓
-Evidence & post-pass usage
+Evidence / steering events / safety state / post-pass usage
        ↓
 Accept gate or record attempt
 ```
 
-## Shared-pool architecture
+## Major v2 change: two-axis model architecture
 
-The central design assumption is not that Work and Codex have separate independent budgets. They are treated as competing consumers of one agentic resource pool when the account exposes them under the same allowance.
+v1.2 treated model selection primarily as a Luna/Terra/Sol tier choice. v2.0 preserves that efficient tiered path but separates Astra into an exceptional profile.
 
-This produces three operational consequences:
+```text
+MODEL_PROFILE=TIERED
+MODEL_TIER=LUNA|TERRA|SOL
+```
 
-1. surface routing is a quota decision, not only a capability decision;
-2. duplicate Work/Codex passes are expensive and normally prohibited;
-3. before/after burn measurements need clean attribution.
+or:
+
+```text
+MODEL_PROFILE=ASTRA
+MODEL_TIER=N/A
+ASTRA_JUSTIFIED=YES
+```
+
+This prevents two opposite errors:
+
+1. making Astra the universal default because it is strongest;
+2. pretending Astra is merely a more expensive Sol tier when its product role is end-to-end multi-step work.
+
+## Allowance-domain architecture
+
+The regulator does not maintain one fictional universal quota number.
+
+```text
+WORK_CODEX
+  shared agentic usage/credits for Work and Codex where current plan says so
+
+CHAT_PRO
+  separate Chat model allowance semantics
+
+API
+  API token/tool billing and limits
+```
+
+Burn comparison is valid only inside the same allowance domain and reset window.
+
+## Astra admission boundary
+
+Astra may own multiple internal stages inside one gate, but may not silently cross into the next gate.
+
+```text
+ONE_GATE = ONE_PRIMARY_SURFACE
+```
+
+Astra end-to-end execution is therefore deeper inside a gate, not broader across permissions/business goals.
+
+## Steering transaction
+
+Mid-turn changes are classified:
+
+```text
+SAME_GATE
+EXPANDS_GATE
+CHANGES_ACTION
+CHANGES_CLASS
+UNKNOWN
+```
+
+Only `SAME_GATE` can continue without a fresh admission, and only if quota, safety, permissions and scope remain unchanged.
+
+## Safety-state architecture
+
+```text
+NORMAL
+PAUSED_FOR_REVIEW
+BLOCKED
+UNKNOWN
+```
+
+A platform/model safety pause is a control-plane event. It is not converted into an ordinary model failure and is not bypassed by switching surfaces or replaying the same prompt.
 
 ## Normative layers
 
 - `SKILL.md` — executable synthesis.
-- `references/01` — routing.
-- `references/02` — shared pool / credits.
+- `references/01` — surface routing.
+- `references/02` — allowance domains / shared Work-Codex pool / credits.
 - `references/03` — class 0–4.
 - `references/04` — runway / burn.
 - `references/05` — Work/browser/actions/schedules.
 - `references/06` — Codex technical discipline.
 - `references/07` — failure recovery.
-- `references/SOURCE_MAP.md` — official provenance.
-
-A normative rule that exists only in a reference but not in `SKILL.md` should be treated as a release-integrity defect.
+- `references/08` — model profile/tier router.
+- `references/09` — Astra execution contract.
+- `references/SOURCE_MAP.md` — first-party provenance.
 
 ## Attribution states
 
 ```text
 CLEAN
-  One agentic pass was the only meaningful shared-pool consumer between snapshots.
+  One meaningful shared-pool consumer inside the same allowance domain.
 
 MIXED
-  Multiple supported agentic features (Work, Codex, or another confirmed
-  shared-pool consumer) ran between snapshots.
+  Multiple confirmed shared-pool consumers ran between snapshots.
 
 UNKNOWN
-  Snapshot is missing, reset crossed, accounting source changed,
-  or other-consumer activity is unknown.
+  Snapshot/reset/domain/activity state is insufficient.
 ```
 
 Only CLEAN comparable data is strong burn-history evidence.
 
-The set of OpenAI shared-pool consumers is not hardcoded: only features confirmed by current official sources / account UI count. External tools (Kimi, Skyvern, etc.) are not OpenAI shared-pool consumers and do not by themselves make attribution MIXED.
+Astra history should be compared to similar Astra work, not estimated from a guessed Sol/Terra multiplier.

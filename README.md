@@ -1,40 +1,42 @@
 # OpenAI Work + Codex Regulator
 
-**Version:** v1.2
+**Version:** v2.0
 
-`openai-work-codex-regulator` — quota-aware operational skill для выбора и контроля ChatGPT Work и Codex без дублирования agentic runs и бесконтрольного расхода общей квоты.
+`openai-work-codex-regulator` — quota-aware operational skill для выбора и контроля ChatGPT Work и Codex без дублирования agentic runs, бесконтрольного расхода общей квоты и необоснованной эскалации к самым дорогим моделям.
 
-## Что контролирует
+## v2.0: GPT-6 Astra major update
 
-- routing между `CHAT`, `WORK`, `CODEX`, включая bounded Chat вместо дорогого agentic pass;
-- gate `WHY_AGENTIC` / `VALUE_OUTPUT` и explicit `USER_SURFACE_OVERRIDE`;
-- capability-tier routing `LUNA / TERRA / SOL` с отдельным effort/fallback и запретом постоянного generation hardcode;
-- общий agentic usage / credit pool Work + Codex и других supported features;
-- 5h/weekly/credits snapshot, когда они показаны аккаунтом, и его freshness по классу задачи;
-- capability/permission state поверхности (Work Cloud/Local, Codex Local, browser, network);
-- paid credits / Auto top-up policy и отдельную credit eligibility конкретной feature;
-- project runway и burn ledger с атрибуцией `CLEAN / MIXED / UNKNOWN`;
-- task classes 0–4;
-- Fast / max / Ultra / model escalation;
-- parallel agents;
-- Work browser research, external actions, untrusted content / prompt injection, account identity, download safety;
-- Scheduled Tasks, включая runaway protection;
-- Codex repo/server/git/deploy discipline;
-- failure handling и result verification.
+v2.0 перестраивает model/execution policy под GPT-6 Astra и текущую архитектуру ChatGPT Work + Codex.
 
-## Главная идея
+Главные изменения:
+
+- Astra больше не трактуется как ещё один `Luna / Terra / Sol` tier: это отдельный `MODEL_PROFILE=ASTRA` для hardest end-to-end work;
+- Astra не является default. Для неё требуется `ASTRA_JUSTIFIED=YES`, bounded scope и доказательство, что tiered model недостаточна или создаст больше rework/burn;
+- отделён `Chat / GPT-6 Pro` allowance от shared `Work + Codex` allowance через `ALLOWANCE_DOMAIN`;
+- добавлены Astra-specific quota/burn gates: Astra может расходовать Work/Codex allowance быстрее, чем GPT-5.6 Sol; Fast требует отдельного cost justification;
+- добавлен Codex client-readiness gate для Astra (`CODEX_CLIENT_ASTRA_READY`), потому что доступ зависит не только от plan/UI, но и от совместимой версии клиента;
+- добавлена steering policy: mid-turn изменение требований повторно проверяет gate, scope, class и approvals;
+- добавлен `SAFETY_STATE=PAUSED_FOR_REVIEW`: safety pause/stop Astra нельзя обходить повтором через другую surface/model;
+- добавлен Astra cyber-sensitive authorization gate: более высокая capability никогда не расширяет разрешённый target/scope;
+- сохранены `ONE_GATE = ONE_PRIMARY_SURFACE`, class 0–4, read-only-first для class 4, exact write scope, human approvals, prompt-injection defense, burn attribution и two-attempt rule;
+- добавлена нормативная ссылка `references/09_ASTRA_EXECUTION.md` и новый набор regression tests.
+
+## Главная модель принятия решения
 
 ```text
 Chat = orchestration / planning / review / bounded lookup
 Work = browser / research / connected apps / deliverables / scheduled work
 Codex = code / terminal / repo / tests / server
 
-Work + Codex = shared agentic pool
+Work + Codex = shared agentic allowance domain
+Chat Pro-model allowance != Work/Codex allowance
 ```
 
-Один gate имеет одну primary surface. Полный дубль Work ↔ Codex запрещён без отдельной VERIFY-цели. Простая задача, которую обычный Chat решает своими web/file возможностями, не должна автоматически уходить в Work.
+Один gate имеет одну primary surface. Полный дубль Work ↔ Codex запрещён без отдельной VERIFY-цели.
 
-Для Work/Codex v1.2 добавляет отдельный model-tier router:
+## Model routing
+
+Обычная маршрутизация сохраняет tiered family:
 
 ```text
 Luna  = economy / high-volume routine extraction
@@ -42,74 +44,81 @@ Terra = balanced default for most research / implementation
 Sol   = quality-first consequential synthesis
 ```
 
-Конкретный generation ID не является постоянной политикой: актуальная модель и effort берутся из текущего account/workspace UI и свежей first-party документации. Подробности — `references/08_MODEL_TIER_ROUTING.md`.
+Astra находится над этой осью как exceptional profile:
+
+```text
+MODEL_PROFILE=ASTRA
+ASTRA_JUSTIFIED=YES
+ASTRA_SCOPE_BOUND=<bounded end-to-end gate>
+```
+
+Использовать Astra, когда задача действительно требует сложной многошаговой orchestration, heterogeneous tool use, длинной цепочки зависимостей или consequential synthesis, где более лёгкий путь создаёт существенный риск повторных дорогостоящих проходов.
+
+Не выбирать Astra только потому, что задача важная, новая модель доступна или пользователь хочет «самое сильное».
+
+Подробности: `references/08_MODEL_TIER_ROUTING.md` и `references/09_ASTRA_EXECUTION.md`.
 
 ## Quick start
 
 ```text
 Используй openai-work-codex-regulator.
-Определи, нужен ли здесь ChatGPT Work или Codex, выбери минимально достаточный model tier/effort, проверь quota/runway и сформируй один bounded pass.
+Определи, нужен ли здесь ChatGPT Work или Codex, выбери минимально достаточный model profile/tier/effort, проверь allowance domain, quota/runway и сформируй один bounded pass.
 
 Задача: <описание>
 ```
 
-## Перед тяжёлым pass
-
-Желательно приложить актуальный first-party snapshot из `Settings → Usage / Usage Dashboard`:
+## Перед тяжёлым Work/Codex pass
 
 ```text
+SNAPSHOT_AT=<time>
+PLAN=<plan|unknown>
+ALLOWANCE_DOMAIN=WORK_CODEX
 5h used/reset: <если показано>
 Weekly used/reset: <если показано>
 Credit balance: <если показано>
-Auto top-up: ON/OFF
+Auto top-up: ON/OFF/unknown
 Paid credits allowed: YES/NO
-Project runway: <например 4–6 pass>
-```
+Project runway: <Pmin..Pmax>
 
-Если поле не показано — пишется `unknown`; skill не должен его выдумывать. Для class 0–1 и bounded low-burn class 2 snapshot не является ритуалом — см. `references/02_SHARED_QUOTA_AND_CREDITS.md`.
-
-Для cost-sensitive class 2–4 Work/Codex pass также фиксируется:
-
-```text
 MODEL_AVAILABILITY_SNAPSHOT=<UI/source/time|unknown>
-MODEL_TIER=<LUNA|TERRA|SOL|OTHER|UNKNOWN>
-EFFORT=<available effort>
+MODEL_PROFILE=<TIERED|ASTRA|OTHER|UNKNOWN>
+MODEL_TIER=<LUNA|TERRA|SOL|N/A|OTHER|UNKNOWN>
+EFFORT=<current available effort>
 WHY_THIS_MODEL=<bounded reason>
-FALLBACK_MODEL=<tier/effort|none|unknown>
+FALLBACK_MODEL=<profile/tier/effort|none|unknown>
 ```
 
-## После pass
+При Astra дополнительно:
 
 ```text
-Проверь результат по openai-work-codex-regulator.
-
-PASS_ID: ...
-Отчёт агента: ...
-Usage before: ...
-Usage after: ...
+ASTRA_JUSTIFIED=<YES|NO>
+ASTRA_SCOPE_BOUND=<exact gate>
+CODEX_CLIENT_ASTRA_READY=<YES|NO|UNKNOWN|N/A>
+SAFETY_STATE=<NORMAL|PAUSED_FOR_REVIEW|BLOCKED|UNKNOWN>
 ```
 
 ## Структура
 
 ```text
-SKILL.md                     executable synthesis
-references/                  normative rules + official source map
-references/08_MODEL_TIER_ROUTING.md  model/effort router
-docs/USAGE.md                practical guide
-docs/ARCHITECTURE.md         decision architecture
-docs/RELEASE_PROCESS.md      release checklist and automation
-tests/TEST_CASES.md          regression cases (60)
-scripts/validate_repo.py     repository validation
-scripts/package_release.py   release ZIP + clean round-trip validation
+SKILL.md                            executable synthesis
+references/01..08                  core normative rules
+references/09_ASTRA_EXECUTION.md   Astra admission / steering / safety contract
+references/SOURCE_MAP.md           official source provenance
+docs/USAGE.md                      practical guide
+docs/ARCHITECTURE.md               decision architecture
+docs/RELEASE_PROCESS.md            release checklist and automation
+tests/TEST_CASES.md                 regression cases
+scripts/validate_repo.py            repository validation
+scripts/package_release.py          release ZIP + clean round-trip validation
 ```
 
 ## Product facts
 
-Product/limit/model facts are time-sensitive. `references/SOURCE_MAP.md` records the official OpenAI sources verified for v1.2 (2026-08-22). Account UI always wins for personal remaining usage and actual model/effort availability.
+Model names, rollout, client minimums, rate multipliers and plan availability are time-sensitive. `references/SOURCE_MAP.md` records first-party OpenAI sources verified for v2.0 on 2026-09-05. Actual account/workspace UI remains authoritative for personal remaining usage and current availability.
 
 ## Validation
 
 ```bash
-python3 scripts/validate_repo.py      # source tree validation
-python3 scripts/package_release.py    # release ZIP + clean round-trip validation
+python3 scripts/validate_repo.py
+python3 scripts/package_release.py
 ```

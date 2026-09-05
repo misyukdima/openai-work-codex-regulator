@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.0 — 2026-09-05
+
+Major Astra architecture release for ChatGPT Work + Codex.
+
+- Added GPT-6 Astra as a separate exceptional `MODEL_PROFILE=ASTRA`, not as a fourth Luna/Terra/Sol tier.
+- Added `ASTRA_JUSTIFIED`, `ASTRA_SCOPE_BOUND`, Astra fallback and explicit admission rules so the strongest model is not the default for ordinary work.
+- Added `ALLOWANCE_DOMAIN=WORK_CODEX|CHAT_PRO|API|UNKNOWN` to prevent mixing Chat/GPT-6 Pro message allowances with Work/Codex shared agentic usage.
+- Added Astra-specific quota discipline based on current OpenAI guidance that Astra can consume Work/Codex allowance faster than GPT-5.6 Sol.
+- Added Codex Astra readiness gate (`CODEX_CLIENT_ASTRA_READY`) and first-party source tracking for the current minimum Codex client requirement.
+- Added steering transaction semantics for mid-turn requirement changes: same-gate refinements may continue, while gate/class/action expansion requires re-admission.
+- Added `SAFETY_STATE=PAUSED_FOR_REVIEW` recovery semantics. Astra safety pauses/stops are review events, not ordinary capability failures, and must not be bypassed by switching surface/model or blind retry.
+- Added Astra cyber-sensitive authorization posture: stronger capability never expands target ownership, permissions, write scope or external-action approval.
+- Added long-context discipline: large context is a capability, not permission to dump entire histories; compact handoffs and bounded evidence packages remain the default.
+- Added normative `references/09_ASTRA_EXECUTION.md` with Astra admission, burn, steering, safety-pause and fallback rules.
+- Reworked `references/08_MODEL_TIER_ROUTING.md` into a two-axis router: `MODEL_PROFILE` plus optional `MODEL_TIER`.
+- Re-verified first-party OpenAI model, Work/Codex, rate-card and safety sources on 2026-09-05.
+- Updated shared quota reference for current Astra rollout and plan-dependent included/credit usage semantics without hardcoding personal limits.
+- Reworked executable `SKILL.md`, architecture and usage guide around allowance-domain separation and Astra admission.
+- Added regression tests 61–75 for Astra admission, Work/Codex quota separation, Fast cost posture, Codex client readiness, steering, safety pauses, cyber authorization, long context and fallback.
+- Validator upgraded to v2.0 invariants and now requires the Astra execution reference and at least 75 contiguous regression tests.
+- Release remains immutable and ships the validated portable ZIP plus SHA-256 checksum.
+
 ## 1.2 — 2026-08-22
 
 Model-tier routing release focused on quota efficiency and explicit model/effort selection for ChatGPT Work and Codex.
@@ -21,21 +43,14 @@ Quota-saving routing, security and release-hardening release. Architecture of v1
 
 - Added bounded Chat policy (`CHAT_BOUNDED_WEB`) so simple lookups, attached-file summaries and simple artifacts from supplied content stay in CHAT instead of burning an agentic pass.
 - Added `WHY_AGENTIC` / `VALUE_OUTPUT` gate before expensive agentic passes, and `USER_SURFACE_OVERRIDE=YES` for explicit user insistence after one quota-saving warning.
-- Added untrusted-content / prompt-injection doctrine for Work/browser/connected apps (third-party content is data, not instructions).
+- Added untrusted-content / prompt-injection doctrine for Work/browser/connected apps.
 - Added account/browser identity checks before external browser actions.
-- Added download ≠ execution safety rule for scripts/executables/installers/macros/unknown archives.
-- Generalized burn attribution: `OTHER_SHARED_POOL_ACTIVITY` + `ATTRIBUTION=CLEAN|MIXED|UNKNOWN`; external tools (Kimi, Skyvern) do not contaminate OpenAI attribution.
-- Split paid-credit authorization from feature eligibility: `CREDIT_ELIGIBILITY_WORK` / `CREDIT_ELIGIBILITY_CODEX`; UNKNOWN eligibility → PREPARE + first-party UI check.
-- Added optional capability/permission snapshot (`WORK_CLOUD`, `WORK_LOCAL`, `CODEX_LOCAL`, `BROWSER_ACCESS`, `NETWORK_ACCESS`, connected-app permission).
-- Added quota snapshot freshness policy per class (no ritual snapshot for class 0–1 and bounded low-burn class 2).
-- Hardened Scheduled Tasks: measured manual burn, frequency tied to signal change rate, weekly/monthly burn estimate, stop/disable after 2–3 identical scheduled failures.
-- Added context budget discipline (compact handoff, no re-reading unchanged documents, no cross-surface repeated research).
-- Added regression tests 37–50; validator now enforces contiguous numbering and >= 50 tests.
-- Validator v1.1: README/CHANGELOG version sync, v1.1 invariants, SOURCE_MAP verification date, required first-party sources, stale model-name scan, extended secret scan, ASCII filename check.
-- Added `scripts/package_release.py` with clean ZIP round-trip validation.
-- Added GitHub scaffolding: `.gitattributes`, CODEOWNERS, issue/PR templates, validate/release workflows, CONTRIBUTING.md, docs/RELEASE_PROCESS.md.
-- Re-verified first-party OpenAI sources (2026-08-22), added the official built-in browser safety article to SOURCE_MAP.
-- Hardened release pipeline before first publication: manual `workflow_dispatch` trigger instead of automatic release on push; fail-closed when the release or tag for the current VERSION already exists (no delete/re-tag/overwrite); releases may only be published from `refs/heads/main`; single packaging path — the workflow uses `scripts/package_release.py` and publishes its validated `dist/` artifact instead of a duplicate `git archive`.
+- Added download ≠ execution safety rule.
+- Generalized burn attribution: `OTHER_SHARED_POOL_ACTIVITY` + `ATTRIBUTION=CLEAN|MIXED|UNKNOWN`.
+- Split paid-credit authorization from feature eligibility.
+- Added capability/permission snapshot and quota snapshot freshness policy.
+- Hardened Scheduled Tasks and context budget discipline.
+- Added regression tests 37–50 and release validation/packaging automation.
 
 ## 1.0 — 2026-08-21
 

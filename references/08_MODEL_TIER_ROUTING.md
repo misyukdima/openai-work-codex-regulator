@@ -1,194 +1,220 @@
-# Model tier routing
+# Model profile and tier routing
 
-**Policy version:** v1.2  
-**Verified:** 2026-08-22
+**Policy version:** v2.0  
+**Verified:** 2026-09-05
 
-Эта ссылка задаёт нормативный выбор capability tier и reasoning effort для ChatGPT Work и Codex. Она дополняет раздел 10 `SKILL.md`: постоянные generation-specific model IDs не хардкодятся, а выбор делается по durable capability tier, фактической доступности в текущем UI и задаче.
+This reference defines model selection for ChatGPT Work and Codex. v2.0 replaces the old single-axis tier router with two axes:
 
-## 1. Source-backed facts
+```text
+MODEL_PROFILE=<TIERED|ASTRA|OTHER|UNKNOWN>
+MODEL_TIER=<LUNA|TERRA|SOL|N/A|OTHER|UNKNOWN>
+```
 
-По официальной документации OpenAI семейство GPT-5.6 использует три capability tier:
+Exact generation IDs and current effort names remain time-sensitive and must be resolved from the current account/workspace UI and fresh first-party documentation.
 
-- `Sol` — flagship tier;
-- `Terra` — balanced/lower-cost tier для everyday work;
-- `Luna` — fastest / lowest-cost tier.
+## 1. Why Astra is not a fourth tier
 
-OpenAI отдельно описывает Sol/Terra/Luna как durable capability tiers: номер поколения может меняться, а названия tier могут развиваться независимо. Поэтому skill может использовать `SOL|TERRA|LUNA` как устойчивые роли маршрутизации, но не должен навсегда зашивать конкретный `GPT-x.y-*` generation ID.
+OpenAI currently describes GPT-6 Astra as its most capable model for the hardest end-to-end work, while GPT-5.6 continues to expose Luna/Terra/Sol capability tiers in Work/Codex.
 
-На дату проверки Plus/Pro/Business/Enterprise в ChatGPT Work и Codex могут выбирать Sol, Terra и Luna и доступный effort; фактический account/workspace UI остаётся источником истины. `max` и `ultra` являются time-sensitive режимами и используются только если реально доступны текущему plan/product.
+Therefore the regulator treats Astra as a separate execution profile rather than forcing it into the durable tier axis.
 
-Текущие rate cards подтверждают существенную разницу расхода между tier. Числа не являются постоянным operational threshold: перед cost-sensitive pass использовать свежую first-party rate card / account UI.
+Operationally:
+
+- `TIERED` = normal quota-efficient routing through Luna/Terra/Sol;
+- `ASTRA` = exceptional end-to-end capability profile with stronger admission and burn discipline;
+- `OTHER` = current UI offers something outside both known profiles;
+- `UNKNOWN` = current availability cannot be established.
 
 ## 2. Normalized model snapshot
 
-Перед class 2–4 Work/Codex pass, когда выбор модели заметно влияет на burn или качество, фиксировать:
+For cost-sensitive class 2–4 Work/Codex passes:
 
 ```text
 MODEL_AVAILABILITY_SNAPSHOT=<UI/source/time|unknown>
-MODEL_TIER=<LUNA|TERRA|SOL|OTHER|UNKNOWN>
-EFFORT=<light|medium|high|extra-high|max|ultra|other|unknown>
+MODEL_PROFILE=<TIERED|ASTRA|OTHER|UNKNOWN>
+MODEL_TIER=<LUNA|TERRA|SOL|N/A|OTHER|UNKNOWN>
+EFFORT=<current available value>
 WHY_THIS_MODEL=<one bounded reason>
-FALLBACK_MODEL=<tier/effort|none|unknown>
-MODEL_COST_POSTURE=<ECONOMY|BALANCED|QUALITY_FIRST>
+FALLBACK_MODEL=<profile/tier/effort|none|unknown>
+MODEL_COST_POSTURE=<ECONOMY|BALANCED|QUALITY_FIRST|EXCEPTIONAL>
 ```
 
-Не придумывать доступность tier/effort. Если UI не показывает вариант — считать его недоступным для текущего pass.
+Do not invent availability. Current account/workspace UI wins over stale prompts or old release notes.
 
-## 3. Default routing policy
+## 3. TIERED defaults
 
 ### LUNA — economy / high-volume routine work
 
-Предпочитать `LUNA`, когда основная ценность — объём, скорость и дешёвая обработка, а каждая единица работы низкорисковая и проверяемая:
+Use when value comes mainly from speed/volume and each unit is low-risk and strongly verifiable:
 
-- массовый reconnaissance по заранее заданным surfaces;
-- SERP/URL discovery;
-- extraction из большого числа однотипных страниц;
-- первичная фильтрация и дедупликация кандидатов;
-- классификация по заранее заданной schema;
-- recurring monitoring с простым meaningful-change filter;
-- механическое структурирование уже собранного evidence.
+- URL/SERP discovery;
+- extraction from many similar pages;
+- deduplication/filtering;
+- fixed-schema classification;
+- routine monitoring with a meaningful-change filter;
+- mechanical structuring of accepted evidence.
 
-Типичный effort: `medium`; `high` — только при доказанной неоднозначности классификации.
+Do not use Luna for consequential legal/security/production synthesis merely to save quota.
 
-Не использовать Luna как автоматический выбор для legal/security/production synthesis только ради экономии.
+### TERRA — balanced default
 
-### TERRA — default balanced Work/Codex tier
+Use for most class 2–3 substantive work:
 
-`TERRA` — стандартный выбор для большинства содержательных class 2–3 agentic pass, если не доказана необходимость Sol:
-
-- multi-source public-web research;
-- buyer-demand discovery и lead qualification;
-- конкурентный анализ;
-- сравнение офферов / условий / фактов;
-- browser research с несколькими связанными ветками;
-- обычная реализация/отладка в Codex;
+- ordinary multi-source research;
+- buyer-demand discovery and qualification;
+- competitive comparisons;
+- browser research with several related branches;
+- normal Codex implementation/debugging;
 - funnel/operations analysis;
-- synthesis, где ошибки обратимы и результат будет проверен человеком.
+- reversible synthesis that will be verified.
 
-Типичный effort: `medium` или `high`.
+If a task is not clearly Luna and does not justify Sol or Astra, begin with Terra.
 
-Если задача не очевидно Luna и не требует Sol, начинать с Terra.
+### SOL — quality-first consequential synthesis
 
-### SOL — quality-first / consequential synthesis
-
-Выбирать `SOL`, когда цена ошибки или сложность синтеза существенно выше экономии quota:
+Use when synthesis complexity or cost of error is materially higher:
 
 - legal + commercial synthesis;
-- security/production decisions;
-- противоречащие authoritative sources;
-- сложная архитектура или incident reasoning;
-- финальная стратегия на основе большого неоднородного fact pack;
-- class 4 read-only analysis, где неверный вывод способен привести к деньгам, данным, production или репутационному риску;
-- задачи, где Terra уже дала недостаточный результат и есть новая гипотеза, а не просто повтор того же prompt.
+- complex architecture/security reasoning;
+- production incident read-only analysis;
+- conflicting authoritative sources;
+- final consequential synthesis from a heterogeneous fact pack;
+- class 4 read-only decisions where wrong reasoning could materially affect money/data/production/reputation.
 
-Типичный effort: `high`. Более сильный effort требует отдельного обоснования.
+Sol is not the default merely because the task is important.
 
-Sol не является default для всей важной работы: важность задачи сама по себе не отменяет принцип минимально достаточного tier.
+## 4. ASTRA profile
 
-## 4. Effort routing
+Astra is not a default escalation after Sol. It is selected only when the gate itself materially benefits from end-to-end capability.
 
-Effort выбирать отдельно от tier.
-
-- `light/medium` — extraction, классификация, bounded routine work;
-- `medium/high` — основной research, implementation, comparison, synthesis;
-- `high` — сложные/последовательные решения, противоречия, consequential read-only analysis;
-- `extra-high/max` — только bounded задача с `WHY_MAX`; нельзя включать «на всякий случай»;
-- `ultra` — только если текущий UI/plan действительно предлагает режим, задача естественно параллелизуема, есть quota/runway и есть `WHY_ULTRA`.
-
-Обязательные поля при `max`:
+Required fields:
 
 ```text
-WHY_MAX=<почему high недостаточно>
-MAX_SCOPE_BOUND=<что именно ограничивает работу>
+MODEL_PROFILE=ASTRA
+MODEL_TIER=N/A
+ASTRA_JUSTIFIED=YES
+ASTRA_SCOPE_BOUND=<exact gate>
+ASTRA_EXPECTED_ADVANTAGE=<bounded reason>
+ASTRA_FALLBACK=<fallback|none>
 ```
 
-При `ultra` дополнительно:
+Strong reasons include:
+
+1. multi-stage end-to-end work where stage handoffs themselves create meaningful risk/rework;
+2. heterogeneous tool/computer/research/code work inside one bounded gate;
+3. complex cross-domain synthesis with contradictions that a tiered path cannot reliably resolve;
+4. a demonstrated capability ceiling on a sufficient tiered attempt plus a new hypothesis;
+5. a bounded gate where one Astra run is expected to cost less overall than several failed/redundant tiered passes.
+
+Weak/non-reasons:
+
+- novelty;
+- importance alone;
+- impatience;
+- “use the strongest model” without task-specific reasoning;
+- CAPTCHA/network/permission/data blocker;
+- repeating an identical failing prompt;
+- avoiding a required approval or baseline.
+
+## 5. Effort routing
+
+Effort is independent from profile/tier.
+
+Use the lowest current effort that is sufficient. Current Astra API guidance supports `low`, `medium`, `high`, `xhigh`, and `max`, but Work/Codex UI availability may differ and can change.
+
+For the strongest current effort:
 
 ```text
-WHY_ULTRA=<почему параллельная multi-agent работа полезнее обычного pass>
-ULTRA_MERGE_PLAN=<как объединяются независимые ветки>
+WHY_MAX=<why lower effort is insufficient>
+MAX_SCOPE_BOUND=<what bounds the work>
 ```
 
-Отсутствие обоснования → понизить effort до минимально достаточного.
+Do not preserve retired effort names as permanent policy.
 
-## 5. Escalation / de-escalation
+## 6. Fast mode
 
-Эскалация tier допустима, если:
+Fast is a latency/cost decision, not a capability requirement.
 
-1. текущая strategy валидна;
-2. failure связан с capability/quality, а не с blocker, CAPTCHA, отсутствием данных или плохим scope;
-3. сформулирована новая гипотеза;
-4. quota/runway допускает более дорогой pass;
-5. записан `WHY_THIS_MODEL`.
+For Astra + Fast:
 
-После двух одинаковых неудач запрещено просто повышать tier/effort. Сначала менять strategy/scope.
+```text
+FAST_REQUIRED=YES
+WHY_FAST=<material latency reason>
+FAST_COST_ACK=<current UI/rate card checked|unknown>
+```
 
-Деэскалировать к более дешёвому tier, если этап перешёл от reasoning к массовой extraction/classification и качество можно проверить schema/tests.
+As verified 2026-09-05, current first-party Work/Codex rate-card material lists Astra Fast at 2.5× Standard rate. This number is time-sensitive and must not become a permanent quota threshold.
 
-## 6. Surface-specific defaults
+Impatience alone is not enough to enable Fast.
 
-### Work
+## 7. Escalation
 
-- high-volume discovery/extraction → Luna;
-- обычный multi-source research / lead qualification → Terra;
-- legal-commercial / security / финальный consequential synthesis → Sol.
+Escalate only if:
 
-### Codex
+1. current strategy is valid;
+2. failure is capability/quality related rather than blocker/scope/data/permission related;
+3. a new hypothesis exists;
+4. quota/runway supports the higher-cost path;
+5. `WHY_THIS_MODEL` is recorded;
+6. Astra additionally passes `ASTRA_JUSTIFIED`.
 
-- простые механические edits/tests, где diff/tests дают сильную проверку → Luna или Terra по фактической доступности;
-- обычная implementation/debugging → Terra;
-- сложная архитектура, security-sensitive reasoning, production incident analysis → Sol.
+Two identical failures do not justify stronger model/effort.
 
-Для class 4 mutation модель не заменяет read-only baseline, approval, tests и rollback.
+## 8. De-escalation
 
-## 7. Mixed-pipeline strategy
+De-escalate when the task changes from reasoning to high-volume extraction/classification with strong verification, or when Astra completed the hard synthesis and remaining work is mechanical.
 
-Один gate может иметь один primary surface, но внутри одного утверждённого workflow допустима экономичная staged-модель, если продукт это поддерживает без дублирования работы:
+Do not keep Astra active for downstream routine steps merely because it started the workflow.
+
+## 9. Mixed-profile pipelines
+
+A staged pipeline may be efficient:
 
 ```text
 Luna: discover/extract/filter
-→ Terra: qualify/compare/synthesize
-→ Sol: only final consequential synthesis if required
+→ Terra: qualify/compare/implement
+→ Sol: consequential synthesis if needed
+→ Astra: only when a bounded end-to-end or capability ceiling case is justified
 ```
 
-Не гонять одни и те же страницы через все tiers ради «надёжности». Передавать compact evidence package между стадиями.
+Astra should not reread every source by default. Pass compact accepted evidence forward.
 
-Если Work/Codex не позволяет менять tier внутри одного безопасного workflow без раздутого контекста, предпочесть отдельный bounded pass с compact handoff.
-
-## 8. Cost discipline
-
-Не использовать статическую rate card как персональный usage snapshot. Rate card показывает относительную стоимость, а фактический остаток определяется first-party Usage UI.
-
-При одинаково достаточном качестве выбирать более дешёвый tier.
-
-Если текущая официальная rate card существенно изменилась, обновить SOURCE_MAP и это reference до следующего release, а не переносить старые коэффициенты в постоянную логику.
-
-## 9. Fallback
-
-Если рекомендованный tier недоступен:
-
-1. не выдумывать его наличие;
-2. выбрать ближайший достаточный доступный tier;
-3. записать `FALLBACK_MODEL` и причину;
-4. если fallback меняет risk/cost существенно — статус `ПОДГОТОВКА` до подтверждения пользователя или quota snapshot.
-
-Пример:
+A different valid pattern is:
 
 ```text
-MODEL_TIER=TERRA
-EFFORT=high
-WHY_THIS_MODEL=multi-source buyer-demand research; Sol not justified
-FALLBACK_MODEL=SOL/high only if Terra cannot resolve conflicting authoritative evidence
+Astra: one bounded end-to-end gate
+→ Terra/Luna: mechanical follow-up after the hard gate is closed
 ```
 
-## 10. Forbidden model behavior
+## 10. Fallback
 
-Запрещено:
+If a recommended option is unavailable:
 
-- выбирать Sol только потому, что задача «важная»;
-- выбирать Luna только потому, что она дешёвая, если цена ошибки высока;
-- включать max/ultra без bounded justification;
-- повторять один и тот же failing prompt на более сильном tier без новой гипотезы;
-- хардкодить конкретный generation ID как постоянную политику;
-- считать API/token rate card точным burn конкретного pass;
-- считать availability из документации сильнее фактического account/workspace UI.
+1. do not invent availability;
+2. choose the nearest sufficient available profile/tier;
+3. record `FALLBACK_MODEL`;
+4. if risk/cost changes materially, return `ПОДГОТОВКА` for quota/user confirmation;
+5. if Astra is requested but unavailable, do not treat purchased credits as a way to obtain rollout access.
+
+## 11. Forbidden behavior
+
+Forbidden:
+
+- defaulting to Astra because it is newest/strongest;
+- treating Astra as a fourth Luna/Terra/Sol tier;
+- selecting Sol/Astra solely because a task is “important”;
+- selecting Luna solely because it is cheap when error cost is high;
+- using model escalation to fight CAPTCHA/network/permission blockers;
+- using max/Fast without bounded justification;
+- hardcoding a generation ID as permanent routing policy;
+- using API/token rate cards as exact personal Work/Codex burn;
+- assuming docs availability is stronger than actual account/workspace UI.
+
+## 12. Official sources
+
+- https://help.openai.com/en/articles/20001354-gpt-56-and-gpt-6-pro-in-chatgpt
+- https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex
+- https://openai.com/index/gpt-6-astra/
+- https://developers.openai.com/api/docs/models/gpt-6-astra
+- https://developers.openai.com/api/docs/guides/latest-model
+- https://help.openai.com/en/articles/11481834-chatgpt-rate-card
