@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Repository validator for openai-work-codex-regulator v2.x."""
 from pathlib import Path
+import importlib.util
 import re
 import sys
 
@@ -26,8 +27,10 @@ REQUIRED = [
     "references/07_FAILURES_AND_RECOVERY.md",
     "references/08_MODEL_TIER_ROUTING.md",
     "references/09_ASTRA_EXECUTION.md",
+    "references/10_WEEKLY_QUOTA_CONTROLLER.md",
     "references/SOURCE_MAP.md",
     "tests/TEST_CASES.md",
+    "scripts/weekly_quota_controller.py",
     ".github/CODEOWNERS",
     ".github/PULL_REQUEST_TEMPLATE.md",
     ".github/ISSUE_TEMPLATE/bug.md",
@@ -39,7 +42,9 @@ REQUIRED = [
 SKILL_INVARIANTS = [
     "name: openai-work-codex-regulator",
     "ONE_GATE = ONE_PRIMARY_SURFACE",
+    "QUALITY_FLOOR=NON_NEGOTIABLE",
     "PAID_CREDITS_ALLOWED=NO",
+    "PAID_WEEKLY_RESET_ALLOWED=NO",
     "SURFACE: CHATGPT_WORK",
     "SURFACE: CODEX",
     "STOP AFTER REPORT",
@@ -49,6 +54,14 @@ SKILL_INVARIANTS = [
     "VALUE_OUTPUT",
     "USER_SURFACE_OVERRIDE=YES",
     "ALLOWANCE_DOMAIN=<WORK_CODEX|CHAT_PRO|API|UNKNOWN>",
+    "WEEKLY_METER_SEMANTICS=<USED|REMAINING|UNKNOWN>",
+    "QUOTA_EPOCH_ID",
+    "CONTROL_SLICE_BUDGET_PP",
+    "CONTROL_SLICE_START_WEEKLY_USED_PP",
+    "EFFECTIVE_SLICE_HEADROOM_PP",
+    "BURN_ESTIMATE_WEEKLY_PP",
+    "CONTINUITY_FEASIBLE",
+    "PENDING_BURN",
     "OTHER_SHARED_POOL_ACTIVITY",
     "ATTRIBUTION=CLEAN|MIXED|UNKNOWN",
     "CREDIT_ELIGIBILITY_WORK",
@@ -91,6 +104,26 @@ ASTRA_INVARIANTS = [
     "ONE_GATE = ONE_PRIMARY_SURFACE",
 ]
 
+WEEKLY_CONTROLLER_INVARIANTS = [
+    "QUALITY_FLOOR=NON_NEGOTIABLE",
+    "WEEKLY_METER_SEMANTICS=<USED|REMAINING>",
+    "QUOTA_EPOCH_ID",
+    "BASE_WEEKLY_RESERVE_PP = 10",
+    "RESERVE_FRACTION_CAP = 0.50",
+    "RESERVE_RELEASE_HOURS = 72",
+    "CONTROL_SLICE_HOURS = 24",
+    "CONTROL_SLICE_BUDGET_PP",
+    "CONTROL_SLICE_START_WEEKLY_USED_PP",
+    "EFFECTIVE_SLICE_HEADROOM_PP",
+    "BURN_ESTIMATE_WEEKLY_PP",
+    "BURN_HISTORY_COMPATIBLE",
+    "PENDING_BURN=YES",
+    "PAID_WEEKLY_RESET_ALLOWED=NO",
+    "QUOTA_DECISION=DEFER_FOR_QUALITY",
+    "CONTINUITY_FEASIBLE",
+    "SCHEDULED_WEEKLY_COMMITMENT_PP",
+]
+
 REQUIRED_SOURCES = [
     "https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex",
     "https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan",
@@ -100,6 +133,8 @@ REQUIRED_SOURCES = [
     "https://help.openai.com/en/articles/11481834-chatgpt-rate-card",
     "https://help.openai.com/en/articles/12003714-chatgpt-business-models-and-limits",
     "https://help.openai.com/en/articles/20001415-chatgpt-rate-card-enterprise-token-based-pricing",
+    "https://help.openai.com/en/articles/20001507-paid-weekly-work-and-codex-rate-limit-resets",
+    "https://help.openai.com/en/articles/20001478-reviewing-work-and-codex-usage-and-using-personal-analytics-in-chatgpt-desktop",
     "https://openai.com/products/release-notes/",
     "https://openai.com/index/gpt-6-astra/",
     "https://openai.com/index/safety-overview-gpt-6-astra/",
@@ -107,7 +142,7 @@ REQUIRED_SOURCES = [
     "https://developers.openai.com/api/docs/guides/latest-model",
 ]
 
-MIN_TESTS = 75
+MIN_TESTS = 95
 
 GENERATION_NEUTRAL_FILES = [
     "SKILL.md",
@@ -117,6 +152,7 @@ GENERATION_NEUTRAL_FILES = [
     "references/05_WORK_BROWSER_AND_ACTIONS.md",
     "references/06_CODEX_TECHNICAL_WORK.md",
     "references/07_FAILURES_AND_RECOVERY.md",
+    "references/10_WEEKLY_QUOTA_CONTROLLER.md",
 ]
 
 MODEL_NAME_PATTERNS = [
@@ -142,19 +178,16 @@ def read(rel):
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
-# Required files
 for rel in REQUIRED:
     if not (ROOT / rel).is_file():
         errors.append(f"missing: {rel}")
 
-# Version format and major-release contract
 version = read("VERSION").strip()
 if not re.fullmatch(r"\d+\.\d+", version):
     errors.append("VERSION must be major.minor")
 if version and not version.startswith("2."):
     errors.append("v2 validator requires VERSION 2.x")
 
-# Version synchronization
 readme = read("README.md")
 if version and f"v{version}" not in readme:
     errors.append(f"README.md does not mention current version v{version}")
@@ -162,7 +195,6 @@ changelog = read("CHANGELOG.md")
 if version and not re.search(rf"^##\s+{re.escape(version)}\b", changelog, re.M):
     errors.append(f"CHANGELOG.md missing heading for version {version}")
 
-# Regression tests
 raw_tests = read("tests/TEST_CASES.md")
 numbers = [int(n) for n in re.findall(r"^## Test (\d+)\b", raw_tests, re.M)]
 if not numbers:
@@ -174,42 +206,55 @@ else:
     if len(numbers) < MIN_TESTS:
         errors.append(f"tests count {len(numbers)} < {MIN_TESTS}")
 
-# SKILL core invariants
 skill = read("SKILL.md")
 for needle in SKILL_INVARIANTS:
     if needle not in skill:
         errors.append(f"SKILL.md missing required rule: {needle}")
 
-# Model router invariants
 router = read("references/08_MODEL_TIER_ROUTING.md")
 for needle in MODEL_ROUTER_INVARIANTS:
     if needle not in router:
         errors.append(f"model router missing required rule: {needle}")
 
-# Astra contract invariants
 astra = read("references/09_ASTRA_EXECUTION.md")
 for needle in ASTRA_INVARIANTS:
     if needle not in astra:
         errors.append(f"Astra execution reference missing required rule: {needle}")
 
-# Source map freshness + required first-party sources
+weekly = read("references/10_WEEKLY_QUOTA_CONTROLLER.md")
+for needle in WEEKLY_CONTROLLER_INVARIANTS:
+    if needle not in weekly:
+        errors.append(f"weekly quota controller missing required rule: {needle}")
+
 source_map = read("references/SOURCE_MAP.md")
 if not re.search(r"\*\*Verified:\*\*\s*\d{4}-\d{2}-\d{2}", source_map):
     errors.append("SOURCE_MAP.md missing verification date")
-if "**Skill release:** 2.0" not in source_map:
-    errors.append("SOURCE_MAP.md is not marked for release 2.0")
+if "**Skill release:** 2.1" not in source_map:
+    errors.append("SOURCE_MAP.md is not marked for release 2.1")
 for url in REQUIRED_SOURCES:
     if url not in source_map:
         errors.append(f"SOURCE_MAP missing official source: {url}")
 
-# Generation-neutral executable/core references must not pin generation-specific names
 for rel in GENERATION_NEUTRAL_FILES:
     text = read(rel)
     for pattern, label in MODEL_NAME_PATTERNS:
         if re.search(pattern, text):
             errors.append(f"{rel} contains {label}; move dated model facts to 02/08/09/SOURCE_MAP/tests/changelog")
 
-# Basic secret scanning
+# Import the reference controller and require deterministic mathematical self-tests.
+controller_path = ROOT / "scripts" / "weekly_quota_controller.py"
+if controller_path.is_file():
+    try:
+        spec = importlib.util.spec_from_file_location("weekly_quota_controller_validation", controller_path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("cannot load controller module spec")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        module.self_test()
+    except Exception as exc:
+        errors.append(f"weekly quota controller self-test failed: {exc}")
+
 scan_globs = ("*.md", "*.py", "*.yml", "*.yaml", "*.toml", "*.txt")
 scan_targets = set()
 for glob in scan_globs:
@@ -222,7 +267,6 @@ for path in sorted(scan_targets):
         if re.search(pattern, text):
             errors.append(f"{path.relative_to(ROOT)} contains {label}")
 
-# Portable filenames
 for path in sorted(ROOT.rglob("*")):
     rel = path.relative_to(ROOT).as_posix()
     if rel.startswith(".git/") or not path.is_file():
@@ -236,4 +280,7 @@ if errors:
         print(f"- {error}")
     sys.exit(1)
 
-print(f"Repository validation OK — openai-work-codex-regulator v{version} ({len(numbers)} tests, Astra contract present)")
+print(
+    f"Repository validation OK — openai-work-codex-regulator v{version} "
+    f"({len(numbers)} tests, Astra + adaptive weekly controller present)"
+)

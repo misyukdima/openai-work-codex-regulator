@@ -1,85 +1,118 @@
 # Shared agentic usage, credits and first-party snapshot
 
-**Version:** 2.0  
+**Version:** 2.1  
 **Verified:** 2026-09-05  
 **Status:** normative
 
 ## 1. Core architecture
 
-OpenAI currently documents ChatGPT Work and Codex as sharing the same agentic usage structure when available on the user's plan. Astra participates in that Work/Codex allowance when it is available.
+Current first-party OpenAI material documents Codex, ChatGPT Work and other supported agentic features as drawing from the same agentic usage/credit pool when those features are available on the plan.
 
-A separate Chat model allowance, including GPT-6 Pro where offered, must not be treated as spare Work/Codex capacity.
-
-Normalize the billing/usage domain first:
+For this regulator:
 
 ```text
 ALLOWANCE_DOMAIN=<WORK_CODEX|CHAT_PRO|API|UNKNOWN>
 ```
 
+A Work/Codex weekly controller may only use `ALLOWANCE_DOMAIN=WORK_CODEX`.
+
 Operational consequences:
 
 - Work is not a free fallback after Codex exhaustion;
 - Codex is not a free fallback after Work exhaustion;
-- Chat/GPT-6 Pro message limits do not estimate Work/Codex remaining usage;
-- API key billing is a different domain from ChatGPT-plan Work/Codex usage;
-- parallel and scheduled runs can compound the shared Work/Codex pool.
+- a separate Chat Pro-model allowance is not spare Work/Codex capacity;
+- API-key billing is a different domain;
+- scheduled, delegated and other confirmed shared-pool activity must be counted against the same Work/Codex continuity objective.
 
-## 2. Astra-specific current facts
+## 2. Usage depends on execution shape
 
-As verified 2026-09-05, first-party OpenAI material states:
+OpenAI states that Work/Codex usage varies with factors including:
 
-- GPT-6 Astra is rolling out to Plus, Pro, Business and Enterprise for Work/Codex, subject to actual account/workspace availability;
-- Pro $100, Pro $200 and Business Premium can use their full existing Work/Codex allowance for Astra;
-- Plus and Business Standard include limited Astra usage, with optional credits afterward where eligible;
-- buying credits does not provide early rollout access;
-- Astra can use Work/Codex allowance faster than GPT-5.6 Sol;
-- usage depends on task size, input/output size, reasoning settings and Fast mode.
+- model;
+- where the task runs;
+- task size and complexity;
+- context;
+- reasoning;
+- speed/Fast mode;
+- tools;
+- long-running or delegated work.
 
-These plan/rollout facts are **time-sensitive**. Account/workspace UI wins.
+Therefore the regulator must not pretend that one prompt, one token count or one model name has a fixed weekly percentage cost.
+
+The mathematical weekly controller in `references/10_WEEKLY_QUOTA_CONTROLLER.md` is deliberately feedback-based: it plans from first-party meter state and corrects from observed burn.
 
 ## 3. Sources of truth
 
-For personal remaining Work/Codex usage:
+For personal Work/Codex allowance state, use:
 
-1. ChatGPT/Codex `Settings → Usage / Usage Dashboard`;
-2. first-party usage banner/reset shown by the account;
-3. first-party credit balance and spending controls;
-4. `/status` inside Codex as supplemental session telemetry where available;
-5. task/thread credit usage where displayed.
+1. current first-party `Settings → Usage / Usage Dashboard` or `Usage & billing`;
+2. current first-party limit/reset banner;
+3. current credit balance / spending controls;
+4. `/status` in Codex as supplemental telemetry where available;
+5. per-chat/per-task usage as supporting evidence where available.
 
-Do not infer personal remaining usage from a static rate card or API token price.
+The aggregate first-party allowance meter is stronger evidence for total weekly continuity than a per-chat total. Current OpenAI documentation notes that chat-level usage can be incomplete and that reporting can lag in some products/workspaces.
 
-## 4. Snapshot
+Do not infer remaining included allowance from a static rate card.
+
+## 4. Normalized snapshot
 
 ```text
 SNAPSHOT_AT=
 PLAN=
 ALLOWANCE_DOMAIN=WORK_CODEX
 SHARED_INCLUDED_USAGE=known|unknown
-FIVE_HOUR_USED=
-FIVE_HOUR_RESET=
-WEEKLY_USED=
-WEEKLY_RESET=
-CREDIT_BALANCE=
-AUTO_TOP_UP=
-PAID_CREDITS_ALLOWED=YES|NO
-OTHER_SHARED_POOL_ACTIVITY=YES|NO|UNKNOWN
-CREDIT_ELIGIBILITY_WORK=CONFIRMED|UNAVAILABLE|UNKNOWN
-CREDIT_ELIGIBILITY_CODEX=CONFIRMED|UNAVAILABLE|UNKNOWN
-SOURCE=
+WEEKLY_METER_SEMANTICS=USED|REMAINING|UNKNOWN
+WEEKLY_USED=<percent|unknown>
+WEEKLY_RESET=<time|unknown>
+WEEKLY_METER_GRANULARITY_PP=<pp|unknown>
+FIVE_HOUR_USED=<percent|unknown>
+FIVE_HOUR_RESET=<time|unknown>
+CREDIT_BALANCE=<value|unknown>
+AUTO_TOP_UP=<ON|OFF|unknown>
+PAID_CREDITS_ALLOWED=<YES|NO>
+PAID_WEEKLY_RESET_ALLOWED=<YES|NO>
+OTHER_SHARED_POOL_ACTIVITY=<YES|NO|UNKNOWN>
+CREDIT_ELIGIBILITY_WORK=<CONFIRMED|UNAVAILABLE|UNKNOWN>
+CREDIT_ELIGIBILITY_CODEX=<CONFIRMED|UNAVAILABLE|UNKNOWN>
+SOURCE=<first-party UI/banner/docs>
 ```
 
-Unknown means unknown.
+If the meter reports remaining rather than used, normalize explicitly:
 
-## 5. Paid credits
+```text
+WEEKLY_USED = 100 - WEEKLY_REMAINING
+```
 
-Default regulator policy:
+Never guess the meter semantics from an unlabeled number.
+
+## 5. Snapshot freshness for adaptive control
+
+For ordinary class 0–1 tasks, a quota snapshot remains optional.
+
+For the v2.1 continuity objective:
+
+- starting or re-anchoring the weekly controller requires a fresh first-party weekly used/remaining value and reset time;
+- every meaningful class 2–4 pass should be followed by a new first-party snapshot when available;
+- a large next pass should not launch while the prior pass burn is still `PENDING` on a lagged meter;
+- any detected reset or material reset-time change invalidates the old slice ledger.
+
+A stale snapshot is not safe merely because it is from the same day.
+
+## 6. Paid credits
+
+Default:
 
 ```text
 PAID_CREDITS_ALLOWED=NO
 ```
 
-The regulator must never enable Auto top-up, purchase credits, assume paid spend approval or use paid spend to rescue bad scope.
+The regulator must not:
+
+- enable Auto top-up;
+- purchase credits;
+- assume paid spend approval;
+- use paid spend to rescue a poor strategy.
 
 Paid continuation requires:
 
@@ -88,60 +121,72 @@ PAID_CREDITS_ALLOWED=YES
 MAX_PAID_CREDITS=<explicit cap>
 ```
 
-No cap → PREPARE before the first paid draw.
-
-Authorization and technical eligibility are separate:
+Authorization and technical eligibility remain separate:
 
 ```text
 CREDIT_ELIGIBILITY_WORK=CONFIRMED|UNAVAILABLE|UNKNOWN
 CREDIT_ELIGIBILITY_CODEX=CONFIRMED|UNAVAILABLE|UNKNOWN
 ```
 
-If included usage is exhausted, spend is authorized, but eligibility is `UNKNOWN` → PREPARE and verify first-party account state.
+If included usage is exhausted and eligibility is unknown → `ПОДГОТОВКА`.
 
-## 6. Rate-card facts are not budget facts
+## 7. Weekly instant reset policy
 
-Current first-party rate cards show materially different consumption across models and modes. Astra is explicitly documented as potentially using allowance faster than GPT-5.6 Sol. Current Work/Codex rate-card material also shows a Fast-mode multiplier for Astra.
-
-Use those facts for relative cost posture only. Do not turn them into a universal personal quota coefficient.
-
-## 7. Astra burn accounting
-
-For an Astra pass record:
+Default:
 
 ```text
-MODEL_PROFILE=ASTRA
-PASS_CREDITS=<if shown>
-ASTRA_BURN_EVIDENCE=<task credits|clean delta|unknown>
+PAID_WEEKLY_RESET_ALLOWED=NO
 ```
 
-Rules:
+Current first-party documentation says eligible Plus/Pro personal accounts may be offered a paid instant Work/Codex weekly reset. A completed paid reset restores applicable usage and changes the weekly schedule: the new weekly period begins with the first Work/Codex request after reset, and the next automatic reset is scheduled seven days after that first request.
 
-- compare Astra history primarily to similar Astra passes;
-- do not reuse Terra/Sol burn coefficients as Astra estimates;
-- do not infer weekly percentage from token count;
-- if other shared-pool activity occurred, attribution is mixed.
+Operational rules:
+
+- never buy an instant reset autonomously;
+- a purchase is a separate class-4 money action;
+- it is not an invisible extension of the current quota epoch;
+- after a reset, discard old `CONTROL_SLICE_*` values and re-anchor from current first-party UI;
+- do not buy a reset simply because the adaptive controller correctly deferred low-value work.
+
+Banked/promotional reset behavior is account/offer specific. Any applied reset is treated as a new quota-epoch event and current UI wins.
+
+## 8. Rate cards and Astra
+
+Current first-party rate cards show materially different paid-credit rates across models. Astra is also explicitly documented as capable of consuming Work/Codex allowance faster than Sol.
+
+Use rate cards for relative cost posture only.
+
+Do not:
+
+- multiply a Sol weekly pp burn by a rate-card ratio to predict Astra weekly pp;
+- convert tokens into weekly pp;
+- assume Fast multiplier equals weekly-meter multiplier;
+- use API prices as included-plan quota coefficients.
+
+Astra history should be compared with similar Astra history.
+
+## 9. Attribution vs total continuity
+
+For exact pass attribution:
 
 ```text
 ATTRIBUTION=CLEAN|MIXED|UNKNOWN
-OTHER_SHARED_POOL_ACTIVITY=YES|NO|UNKNOWN
 ```
 
-External tools such as Kimi or Skyvern are not OpenAI shared-pool activity.
+But the daily/weekly continuity controller uses the **total change in the shared weekly meter** inside the same quota epoch.
 
-## 8. Snapshot freshness
+That means another Work/Codex/shared-pool task may make pass attribution `MIXED`, while still correctly reducing the current control-slice headroom.
 
-- class 0: usually not needed;
-- class 1: optional;
-- bounded low-burn class 2: may proceed with `QUOTA=UNKNOWN` if no paid spill risk and no near-limit warning;
-- class 3–4: fresh snapshot required except urgent read-only containment with explicit caveat;
-- stale snapshot may be reused only in the same relevant reset window with no significant shared-pool activity afterward.
+This distinction is fundamental:
 
-Astra class 2 can still require a fresh snapshot if expected burn is materially uncertain or current plan only includes limited Astra usage.
+```text
+attribution asks "who spent it?"
+continuity asks "how much shared allowance is left?"
+```
 
-## 9. Capability / permission state
+## 10. Capability / permission state
 
-Quota does not imply capability:
+Quota does not imply the required capability is enabled:
 
 ```text
 WORK_CLOUD=ON|OFF|UNKNOWN
@@ -154,13 +199,13 @@ CONNECTED_APP_PERMISSION=OK|MISSING|UNKNOWN
 CODEX_CLIENT_ASTRA_READY=YES|NO|UNKNOWN|N/A
 ```
 
-As verified 2026-09-05, current OpenAI guidance requires a compatible Codex client for Astra and recommends the latest ChatGPT Desktop app. Exact minimum versions are time-sensitive and recorded in `references/09_ASTRA_EXECUTION.md` / `SOURCE_MAP.md`, not in permanent executable logic.
+Do not burn quota discovering a known disabled capability at runtime.
 
-## 10. Official sources
+## 11. Official sources
 
-- https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex
 - https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan
-- https://help.openai.com/en/articles/11481834-chatgpt-rate-card
-- https://help.openai.com/en/articles/12003714-chatgpt-business-models-and-limits
-- https://help.openai.com/en/articles/20001415-chatgpt-rate-card-enterprise-token-based-pricing
+- https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex
 - https://help.openai.com/en/articles/12642688
+- https://help.openai.com/en/articles/20001507-paid-weekly-work-and-codex-rate-limit-resets
+- https://help.openai.com/en/articles/20001478-reviewing-work-and-codex-usage-and-using-personal-analytics-in-chatgpt-desktop
+- https://help.openai.com/en/articles/11481834-chatgpt-rate-card

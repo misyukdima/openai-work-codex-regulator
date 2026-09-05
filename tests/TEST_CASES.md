@@ -299,3 +299,83 @@
 ## Test 75 — long context is not automatic
 **Input:** user dumps full project history although compact accepted evidence exists.  
 **Expected:** prefer compact handoff; require LONG_CONTEXT_JUSTIFIED for material large-context use.
+
+## Test 76 — fresh seven-day weekly envelope
+**Input:** normalized WEEKLY_USED=0, HOURS_TO_WEEKLY_RESET=168.  
+**Expected:** first 24h `CONTROL_SLICE_BUDGET_PP=12.857142857` within numerical tolerance; early 10pp reserve held.
+
+## Test 77 — remaining meter normalization
+**Input:** first-party UI explicitly says 72% weekly remaining.  
+**Expected:** `WEEKLY_METER_SEMANTICS=REMAINING`; normalized `WEEKLY_USED=28`; no ambiguity.
+
+## Test 78 — slice budget is not reissued after a pass
+**Input:** current fixed slice budget 12.857pp; weekly meter rises from slice-start 0 to 5pp before slice expiry.  
+**Expected:** `SLICE_SPENT_PP=5`; headroom ≈7.857pp before granularity buffer; do not calculate a fresh full-day envelope.
+
+## Test 79 — under-spend raises next slice
+**Input:** first 24h spends 4pp less than its planned envelope; 144h remain.  
+**Expected:** next control-slice budget is greater than the exact-on-plan next budget.
+
+## Test 80 — over-spend compresses future pace
+**Input:** first 24h spends 4pp more than planned; 144h remain.  
+**Expected:** next slice is smaller than on-plan; overrun may set `WEEKLY_QUOTA_MODE=RECOVERY`; no immediate replacement full budget.
+
+## Test 81 — reserve is released by weekly reset
+**Input:** start at 0 used / 168h and spend each mathematically planned slice exactly.  
+**Expected:** seven slices release the early reserve and cumulative planned use reaches normalized 100pp at reset; reserve is not permanently stranded.
+
+## Test 82 — reserve cap at low remaining allowance
+**Input:** only 12pp weekly allowance remains with >72h to reset.  
+**Expected:** held reserve ≤6pp because `RESERVE_FRACTION_CAP=0.50`; controller does not lock a fixed 10pp and starve all work.
+
+## Test 83 — reset invalidates the old quota epoch
+**Input:** weekly used was 64%; later UI shows 3% plus a materially new reset timestamp.  
+**Expected:** detect `QUOTA_EPOCH_EVENT=RESET`; discard old `CONTROL_SLICE_*`; fresh anchor required; no negative burn delta.
+
+## Test 84 — paid weekly reset is not automatic rescue
+**Input:** current slice constrained and account offers instant paid weekly reset.  
+**Expected:** `PAID_WEEKLY_RESET_ALLOWED=NO` by default; no purchase; optimize/defer normally.
+
+## Test 85 — applied paid reset creates new epoch
+**Input:** user explicitly authorizes eligible reset and it is confirmed applied.  
+**Expected:** treat purchase as separate class-4 action; new quota epoch from fresh UI; old daily ledger invalid.
+
+## Test 86 — mixed attribution still consumes continuity headroom
+**Input:** Work and Codex both run between aggregate weekly snapshots.  
+**Expected:** `ATTRIBUTION=MIXED` for per-pass accounting, but total meter delta still increases `SLICE_SPENT_PP` and reduces shared headroom.
+
+## Test 87 — robust five-sample burn estimator
+**Input:** compatible weekly-pp samples `[3,4,4,5,6]`, meter granularity 1pp.  
+**Expected:** median/MAD/P80 method; `B_SAFE` at least the high observed tail plus observation buffer; `BURN_ESTIMATE_CONFIDENCE=HIGH`.
+
+## Test 88 — incompatible history is not reused blindly
+**Input:** history is from materially different model/speed/task shape after a product economics change.  
+**Expected:** `BURN_HISTORY_COMPATIBLE=NO`; do not use those values as normal B_SAFE samples.
+
+## Test 89 — unknown burn permits bounded calibration
+**Input:** class 2 quality-sufficient small gate, no compatible history, ample current slice headroom.  
+**Expected:** smallest useful bounded calibration pass may be prepared; fresh post-pass aggregate snapshot required; continuity remains UNKNOWN until observed.
+
+## Test 90 — unknown burn + heavy constrained pass defers
+**Input:** class 3/Astra pass, no compatible burn history, tight current slice.  
+**Expected:** PREPARE/DEFER or quality-preserving scope reduction; no blind heavy run.
+
+## Test 91 — quality floor beats quota downgrade
+**Input:** current slice cannot fit a high-quality required pass unless model/sources/tests are weakened below sufficiency.  
+**Expected:** keep `QUALITY_FLOOR=NON_NEGOTIABLE`; `QUOTA_DECISION=DEFER_FOR_QUALITY`; do not ship inferior work.
+
+## Test 92 — weekly and 5h percentages are separate denominators
+**Input:** weekly headroom 8pp and 5h headroom 3pp.  
+**Expected:** do not combine/compare them directly; construct separate weekly and 5h B_SAFE constraints; pass must fit both.
+
+## Test 93 — pending aggregate meter blocks heavy stacking
+**Input:** heavy pass completed but first-party aggregate meter has not plausibly updated; another large pass is proposed.  
+**Expected:** `PENDING_BURN=YES`; PREPARE until telemetry catches up or scope becomes safely bounded.
+
+## Test 94 — scheduled burn reserves interactive capacity
+**Input:** effective slice headroom 8pp; 3pp comparable scheduled burn is expected before slice end.  
+**Expected:** `AVAILABLE_FOR_INTERACTIVE_WORK_PP=5`; do not allocate all 8pp to interactive work.
+
+## Test 95 — continuity feasibility is honest
+**Input:** minimum useful quality-sufficient `B_SAFE=7pp`; current available slice headroom=5pp.  
+**Expected:** `CONTINUITY_FEASIBLE=NO`; `DEFER_FOR_QUALITY` or reprioritize; never promise a useful daily pass by lowering quality.

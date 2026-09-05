@@ -1,124 +1,204 @@
 # OpenAI Work + Codex Regulator
 
-**Version:** v2.0
+**Version:** v2.1
 
-`openai-work-codex-regulator` — quota-aware operational skill для выбора и контроля ChatGPT Work и Codex без дублирования agentic runs, бесконтрольного расхода общей квоты и необоснованной эскалации к самым дорогим моделям.
+`openai-work-codex-regulator` — quota-aware operational skill для ChatGPT Work и Codex. Он выбирает правильную surface/model configuration, удерживает Work и Codex внутри общей agentic allowance и теперь управляет недельной квотой как адаптивной системой, рассчитанной на работу на протяжении всего reset window.
 
-## v2.0: GPT-6 Astra major update
+## v2.1: adaptive weekly quota controller
 
-v2.0 перестраивает model/execution policy под GPT-6 Astra и текущую архитектуру ChatGPT Work + Codex.
-
-Главные изменения:
-
-- Astra больше не трактуется как ещё один `Luna / Terra / Sol` tier: это отдельный `MODEL_PROFILE=ASTRA` для hardest end-to-end work;
-- Astra не является default. Для неё требуется `ASTRA_JUSTIFIED=YES`, bounded scope и доказательство, что tiered model недостаточна или создаст больше rework/burn;
-- отделён `Chat / GPT-6 Pro` allowance от shared `Work + Codex` allowance через `ALLOWANCE_DOMAIN`;
-- добавлены Astra-specific quota/burn gates: Astra может расходовать Work/Codex allowance быстрее, чем GPT-5.6 Sol; Fast требует отдельного cost justification;
-- добавлен Codex client-readiness gate для Astra (`CODEX_CLIENT_ASTRA_READY`), потому что доступ зависит не только от plan/UI, но и от совместимой версии клиента;
-- добавлена steering policy: mid-turn изменение требований повторно проверяет gate, scope, class и approvals;
-- добавлен `SAFETY_STATE=PAUSED_FOR_REVIEW`: safety pause/stop Astra нельзя обходить повтором через другую surface/model;
-- добавлен Astra cyber-sensitive authorization gate: более высокая capability никогда не расширяет разрешённый target/scope;
-- сохранены `ONE_GATE = ONE_PRIMARY_SURFACE`, class 0–4, read-only-first для class 4, exact write scope, human approvals, prompt-injection defense, burn attribution и two-attempt rule;
-- добавлена нормативная ссылка `references/09_ASTRA_EXECUTION.md` и новый набор regression tests.
-
-## Главная модель принятия решения
+Главное изменение v2.1 — недельная квота больше не планируется статическим делением остатка.
 
 ```text
-Chat = orchestration / planning / review / bounded lookup
-Work = browser / research / connected apps / deliverables / scheduled work
-Codex = code / terminal / repo / tests / server
-
-Work + Codex = shared agentic allowance domain
-Chat Pro-model allowance != Work/Codex allowance
+weekly meter
+→ quota epoch
+→ fixed rolling 24h control slice
+→ observed shared-pool burn
+→ conservative pass estimate
+→ quality-floor admission
+→ feedback re-plan
 ```
 
-Один gate имеет одну primary surface. Полный дубль Work ↔ Codex запрещён без отдельной VERIFY-цели.
+Контроллер:
 
-## Model routing
+- нормализует `WEEKLY_USED` / `WEEKLY_REMAINING` по фактической подписи UI;
+- использует реальный `WEEKLY_RESET`, а не предполагаемый календарный понедельник;
+- создаёт `QUOTA_EPOCH_ID` и полностью re-anchor после reset/plan/allowance change;
+- держит до 10 percentage points risk reserve, но никогда больше 50% текущего остатка;
+- линейно освобождает reserve в последние 72 часа, чтобы buffer не оставался неиспользованным;
+- задаёт fixed 24h `CONTROL_SLICE_BUDGET_PP`;
+- не выдаёт новый полный дневной budget после каждого pass;
+- измеряет total shared Work/Codex burn по aggregate weekly meter;
+- строит conservative `B_SAFE` по максимум пяти сопоставимым наблюдениям;
+- учитывает meter granularity и pending/lagged usage;
+- отдельно проверяет 5-hour window;
+- резервирует Scheduled Task burn;
+- не понижает качество ради экономии.
 
-Обычная маршрутизация сохраняет tiered family:
+Подробная математика: `references/10_WEEKLY_QUOTA_CONTROLLER.md`.
 
-```text
-Luna  = economy / high-volume routine extraction
-Terra = balanced default for most research / implementation
-Sol   = quality-first consequential synthesis
+Reference calculator:
+
+```bash
+python3 scripts/weekly_quota_controller.py \
+  --weekly-used 37 \
+  --hours-to-reset 96
 ```
 
-Astra находится над этой осью как exceptional profile:
+## Quality floor
+
+v2.1 вводит обязательный:
 
 ```text
-MODEL_PROFILE=ASTRA
-ASTRA_JUSTIFIED=YES
-ASTRA_SCOPE_BOUND=<bounded end-to-end gate>
+QUALITY_FLOOR=NON_NEGOTIABLE
 ```
 
-Использовать Astra, когда задача действительно требует сложной многошаговой orchestration, heterogeneous tool use, длинной цепочки зависимостей или consequential synthesis, где более лёгкий путь создаёт существенный риск повторных дорогостоящих проходов.
+Если нужный pass не помещается в текущий quota slice, регулятор сначала уменьшает waste:
 
-Не выбирать Astra только потому, что задача важная, новая модель доступна или пользователь хочет «самое сильное».
+- reuse compact handoff;
+- убирает duplicate research/audits/agents;
+- сокращает non-decision-critical context;
+- выбирает cheaper tier/effort только если он всё ещё independently sufficient;
+- переносит lower-value work.
 
-Подробности: `references/08_MODEL_TIER_ROUTING.md` и `references/09_ASTRA_EXECUTION.md`.
+Он не должен:
 
-## Quick start
+- убирать обязательные sources/tests;
+- использовать stale evidence вместо fresh;
+- запускать заведомо слабую модель;
+- принимать incomplete gate только ради того, чтобы «что-то сделать сегодня».
+
+Если quality-sufficient pass не помещается:
 
 ```text
-Используй openai-work-codex-regulator.
-Определи, нужен ли здесь ChatGPT Work или Codex, выбери минимально достаточный model profile/tier/effort, проверь allowance domain, quota/runway и сформируй один bounded pass.
-
-Задача: <описание>
+QUOTA_DECISION=DEFER_FOR_QUALITY
 ```
 
-## Перед тяжёлым Work/Codex pass
+## Work + Codex shared allowance
+
+Для agentic work:
 
 ```text
-SNAPSHOT_AT=<time>
-PLAN=<plan|unknown>
 ALLOWANCE_DOMAIN=WORK_CODEX
-5h used/reset: <если показано>
-Weekly used/reset: <если показано>
-Credit balance: <если показано>
-Auto top-up: ON/OFF/unknown
-Paid credits allowed: YES/NO
-Project runway: <Pmin..Pmax>
-
-MODEL_AVAILABILITY_SNAPSHOT=<UI/source/time|unknown>
-MODEL_PROFILE=<TIERED|ASTRA|OTHER|UNKNOWN>
-MODEL_TIER=<LUNA|TERRA|SOL|N/A|OTHER|UNKNOWN>
-EFFORT=<current available effort>
-WHY_THIS_MODEL=<bounded reason>
-FALLBACK_MODEL=<profile/tier/effort|none|unknown>
 ```
 
-При Astra дополнительно:
+Work и Codex не являются независимыми недельными корзинами. Любой подтверждённый consumer той же shared allowance уменьшает текущий slice headroom.
+
+Отдельные Chat-model allowances и API billing не используются как запас или коэффициент Work/Codex quota.
+
+## Core routing
 
 ```text
-ASTRA_JUSTIFIED=<YES|NO>
-ASTRA_SCOPE_BOUND=<exact gate>
-CODEX_CLIENT_ASTRA_READY=<YES|NO|UNKNOWN|N/A>
-SAFETY_STATE=<NORMAL|PAUSED_FOR_REVIEW|BLOCKED|UNKNOWN>
+Chat  = orchestration / review / bounded lookup
+Work  = multi-step browser/research/apps/deliverables/actions
+Codex = repo/code/terminal/tests/server/deploy
+
+ONE_GATE = ONE_PRIMARY_SURFACE
 ```
 
-## Структура
+Model architecture v2 сохраняется:
 
 ```text
-SKILL.md                            executable synthesis
-references/01..08                  core normative rules
-references/09_ASTRA_EXECUTION.md   Astra admission / steering / safety contract
-references/SOURCE_MAP.md           official source provenance
-docs/USAGE.md                      practical guide
-docs/ARCHITECTURE.md               decision architecture
-docs/RELEASE_PROCESS.md            release checklist and automation
-tests/TEST_CASES.md                 regression cases
-scripts/validate_repo.py            repository validation
-scripts/package_release.py          release ZIP + clean round-trip validation
+MODEL_PROFILE=TIERED
+  LUNA  = high-volume routine work
+  TERRA = balanced default
+  SOL   = consequential synthesis
+
+MODEL_PROFILE=ASTRA
+  exceptional bounded end-to-end execution
 ```
 
-## Product facts
+Astra требует отдельного admission contract; quota pressure не является основанием искусственно понижать model capability ниже minimum sufficient.
 
-Model names, rollout, client minimums, rate multipliers and plan availability are time-sensitive. `references/SOURCE_MAP.md` records first-party OpenAI sources verified for v2.0 on 2026-09-05. Actual account/workspace UI remains authoritative for personal remaining usage and current availability.
+## Weekly controller fields
+
+```text
+QUOTA_EPOCH_ID=
+WEEKLY_USED=
+WEEKLY_RESET=
+HOURS_TO_WEEKLY_RESET=
+CONTROL_SLICE_ID=
+CONTROL_SLICE_START_WEEKLY_USED_PP=
+CONTROL_SLICE_BUDGET_PP=
+SLICE_SPENT_PP=
+EFFECTIVE_SLICE_HEADROOM_PP=
+BURN_ESTIMATE_WEEKLY_PP=
+BURN_ESTIMATE_CONFIDENCE=
+CONTINUITY_FEASIBLE=
+QUALITY_FLOOR=NON_NEGOTIABLE
+```
+
+## Exact first-day example
+
+Для fresh normalized 7-day weekly window:
+
+```text
+WEEKLY_USED = 0
+WEEKLY_REMAINING = 100
+HOURS_TO_RESET = 168
+BASE_WEEKLY_RESERVE_PP = 10
+
+schedulable early allowance = 90 pp
+
+first 24h envelope =
+90 * 24 / 168
+= 12.857142857 pp
+```
+
+Reserve постепенно освобождается в последние 72 часа. Если фактический burn ниже plan — future daily envelopes растут. Если выше — уменьшаются.
+
+Это feedback control: он не предполагает фиксированную цену одного pass.
+
+## Reset behavior
+
+Любой reset/allowance change создаёт новый quota epoch.
+
+Платный weekly reset по умолчанию запрещён:
+
+```text
+PAID_WEEKLY_RESET_ALLOWED=NO
+```
+
+Если пользователь отдельно разрешает покупку, это class-4 money action. После применения reset старый slice ledger уничтожается и controller строится заново из current first-party UI.
+
+## Repository structure
+
+```text
+SKILL.md
+references/
+  01_SURFACE_ROUTING.md
+  02_SHARED_QUOTA_AND_CREDITS.md
+  03_TASK_CLASSIFICATION.md
+  04_RUNWAY_AND_BURN.md
+  05_WORK_BROWSER_AND_ACTIONS.md
+  06_CODEX_TECHNICAL_WORK.md
+  07_FAILURES_AND_RECOVERY.md
+  08_MODEL_TIER_ROUTING.md
+  09_ASTRA_EXECUTION.md
+  10_WEEKLY_QUOTA_CONTROLLER.md
+  SOURCE_MAP.md
+docs/
+scripts/
+  validate_repo.py
+  package_release.py
+  weekly_quota_controller.py
+tests/TEST_CASES.md
+```
 
 ## Validation
 
 ```bash
 python3 scripts/validate_repo.py
+python3 scripts/weekly_quota_controller.py \
+  --weekly-used 0 \
+  --hours-to-reset 168 \
+  --self-test
 python3 scripts/package_release.py
 ```
+
+The repository validator runs the weekly-controller self-test as part of v2.1 validation.
+
+## Product facts
+
+Usage/reset/model facts are time-sensitive. First-party account UI remains authoritative for actual remaining usage and reset timestamps.
+
+`references/SOURCE_MAP.md` records the official OpenAI sources re-verified for v2.1 on 2026-09-05.

@@ -1,15 +1,24 @@
 # Project runway, pass discipline and burn accounting
 
-**Version:** 1.1  
+**Version:** 2.1  
 **Status:** normative
 
-## 1. Why runway exists
+## 1. Two different runways
 
-The shared Work/Codex pool means a project can consume its future capacity by spending too much on early repeated audits. Runway is a planning budget, not an OpenAI product limit.
+v2.1 explicitly separates:
+
+1. **project runway** — how many meaningful gates/passes remain in the project;
+2. **quota runway** — how much Work/Codex allowance can safely be used before the current weekly reset.
+
+They are related but not interchangeable.
+
+A failed attempt can leave project runway unchanged while still consuming real weekly quota.
+
+Weekly continuity mathematics is normative in `references/10_WEEKLY_QUOTA_CONTROLLER.md`.
 
 ## 2. Pass definition
 
-A pass closes one named gate.
+A substantive agentic pass closes one named gate.
 
 ```text
 PASS_ID=
@@ -23,7 +32,7 @@ A successful pass produces evidence and stops.
 
 ## 3. Attempts
 
-An execution that consumes usage without closing the gate is an attempt, not a completed pass.
+An execution that consumes usage without closing the gate is an attempt, not a completed project pass.
 
 ```text
 ATTEMPT_WITHOUT_GATE_CLOSE=1
@@ -31,9 +40,11 @@ CAUSE=
 COMPENSATION=
 ```
 
-Readiness runway does not decrement.
+Project runway does not decrement automatically after a failed attempt.
 
-## 4. Runway ledger
+Quota state **does** move according to the actual first-party shared weekly meter.
+
+## 4. Project ledger
 
 ```text
 PROJECT=
@@ -47,82 +58,172 @@ ATTEMPTS_SINCE_LAST_GATE=
 
 Do not silently add gates.
 
-## 5. Percentage-window budget
+If a new mandatory gate appears, show the runway delta or merge/replace an existing gate explicitly.
 
-If first-party UI exposes percentages:
+## 5. Quota linkage
 
-```text
-W_REM = 100 - W_USED
-F_REM = 100 - F_USED
-W_RESERVE = 10 percentage points
-F_RESERVE = 10 percentage points
-W_USABLE = max(0, W_REM - W_RESERVE)
-F_USABLE = max(0, F_REM - F_RESERVE)
-TARGET_AVG_WEEKLY_BURN_PER_PASS = W_USABLE / max(1, Pmax)
-```
-
-The 10-point reserve is an internal operating policy, not an OpenAI limit.
-
-## 6. Burn measurement
-
-Same reset-window only:
+For class 2–4 Work/Codex passes, link the project pass to the current quota-controller state:
 
 ```text
-DELTA_WEEKLY = after - before
-DELTA_5H = after - before
+QUOTA_EPOCH_ID=
+CONTROL_SLICE_ID=
+CONTROL_SLICE_BUDGET_PP=
+SLICE_SPENT_PP=
+EFFECTIVE_SLICE_HEADROOM_PP=
+BURN_ESTIMATE_WEEKLY_PP=
+BURN_ESTIMATE_CONFIDENCE=
+QUALITY_FLOOR=NON_NEGOTIABLE
+CONTINUITY_FEASIBLE=YES|NO|UNKNOWN
 ```
 
-If reset occurs between snapshots, delta is invalid.
+A pass does not receive its own independent daily budget. It spends from the currently anchored shared control slice.
 
-If thread/task credit usage is shown, record it directly:
+## 6. Observed burn
+
+A same-epoch before/after weekly meter gives total shared-pool change:
+
+```text
+DELTA_WEEKLY_PP =
+  WEEKLY_USED_AFTER
+  - WEEKLY_USED_BEFORE
+```
+
+For a separate 5-hour meter:
+
+```text
+DELTA_5H_PP =
+  FIVE_HOUR_USED_AFTER
+  - FIVE_HOUR_USED_BEFORE
+```
+
+If a reset occurs between snapshots, the corresponding delta is invalid.
+
+Do not compare weekly pp and 5h pp as though they were the same unit.
+
+If thread/task credits are shown, record them as supporting task-level evidence:
 
 ```text
 PASS_CREDITS=<value>
 ```
 
-Do not invent a tokens→quota-percent coefficient.
+Do not convert them into weekly percentage points with a guessed coefficient.
 
-## 7. Comparable history
-
-Estimate with conservative maximum of up to 3 accepted comparable passes of same surface/role/class.
-
-```text
-EST_BURN=max(last comparable burns)
-```
-
-No data → unknown.
-
-## 8. Attribution: CLEAN / MIXED / UNKNOWN
-
-Contamination is not limited to Work ↔ Codex. Any other OpenAI agentic feature from the shared pool — confirmed by current official sources / account UI (as of the verification date: Workspace Agent, ChatGPT for Excel/PowerPoint, Voice-started tasks) — between before/after snapshots makes the measurement unclean.
+## 7. Attribution
 
 ```text
 OTHER_SHARED_POOL_ACTIVITY=YES|NO|UNKNOWN
 ATTRIBUTION=CLEAN|MIXED|UNKNOWN
 ```
 
-- `CLEAN` is allowed only if no other meaningful OpenAI shared-pool consumer ran between snapshots;
-- `MIXED` — such a consumer ran; the delta must not be treated as the exact burn of the current pass;
-- `UNKNOWN` — other-consumer activity is unknown.
+- `CLEAN`: current pass was the only meaningful confirmed shared-pool consumer between snapshots;
+- `MIXED`: another shared-pool consumer ran;
+- `UNKNOWN`: contamination state cannot be established.
 
-The consumer list is not hardcoded forever: count only features confirmed by current official sources / account UI.
+For **pass attribution**, `MIXED` cannot be called exact burn of one pass.
 
-Kimi, Skyvern and other external tools are not OpenAI shared-pool activity and do not by themselves make attribution `MIXED`.
+For **quota continuity**, the aggregate mixed meter increase still correctly reduces total remaining allowance and current slice headroom.
 
-Do not attribute a combined delta to one task.
+This distinction prevents the regulator from losing track of weekly capacity merely because attribution is imperfect.
 
-## 9. Reset-aware rules
+## 8. Comparable history
 
-- 5h reset ≤15 minutes + class 3–4 non-incident → defer.
-- weekly reset ≤2 hours + heavy non-urgent pass → prefer defer.
-- weekly reset ≤24 hours → current pass must fit, but whole project need not fit before reset.
+The v2.1 burn estimator may use at most five recent materially comparable observations.
 
-## 10. Anti-inflation
-
-Do not automatically create:
+Comparable means similar:
 
 ```text
-research → independent research → audit → implementation → second audit → polish
+allowance configuration
+surface
+role/class
+model profile/tier
+reasoning/speed posture
+task shape/context scale
 ```
 
-If a gate already provides sufficient evidence, move to the next value-producing stage.
+Record:
+
+```text
+BURN_HISTORY_COMPATIBLE=YES|NO|UNKNOWN
+```
+
+Cross-reset observations may remain useful if economics stay compatible. Material model/product/plan/task-shape changes invalidate or split the history.
+
+## 9. Project priority under quota pressure
+
+When the current weekly slice is constrained, do not consume it in FIFO order merely because tasks arrived first.
+
+Prefer work that closes meaningful project gates and reduces future rework.
+
+Good quota-aware ordering can include:
+
+```text
+blocking implementation
+→ verification needed to unblock next gate
+→ consequential research
+→ lower-value polish/optional audit
+```
+
+Priority does not waive safety or approval requirements.
+
+## 10. Quality-preserving anti-inflation
+
+The following pattern is normally wasteful unless each stage closes a distinct required gate:
+
+```text
+research
+→ duplicate research
+→ independent audit without new hypothesis
+→ implementation
+→ second unchanged audit
+→ polish
+```
+
+Under quota pressure, first remove duplicate work, repeated context and unnecessary surfaces.
+
+Do not reduce:
+
+- mandatory source quality;
+- required tests;
+- security baseline;
+- rollback evidence;
+- minimum sufficient model capability.
+
+If a quality-sufficient pass does not fit the current slice:
+
+```text
+QUOTA_DECISION=DEFER_FOR_QUALITY
+```
+
+## 11. Reset handling
+
+A quota reset changes quota state, not project truth.
+
+After a confirmed reset:
+
+- preserve accepted evidence, decisions, diffs and closed gates;
+- discard old `QUOTA_EPOCH_ID` / `CONTROL_SLICE_*` state;
+- create a fresh weekly controller anchor from current first-party UI;
+- revalidate burn-history compatibility;
+- do not rerun completed gates just because capacity returned.
+
+## 12. Scheduled commitments
+
+Scheduled Tasks consume future quota runway and therefore must be visible in project planning.
+
+```text
+SCHEDULED_WEEKLY_COMMITMENT_PP=<estimate|unknown>
+EXPECTED_SCHEDULED_BURN_BEFORE_SLICE_END_PP=<estimate|unknown>
+```
+
+Do not reserve the same percentage points simultaneously for a scheduled task and an interactive project pass.
+
+## 13. Acceptance update
+
+After an accepted class 2–4 pass:
+
+1. verify the gate and evidence;
+2. update project runway;
+3. obtain post-pass aggregate usage when available;
+4. update current slice spent/headroom;
+5. add a burn-history sample only with the correct attribution/compatibility label;
+6. keep quality floor unchanged for the next pass.
