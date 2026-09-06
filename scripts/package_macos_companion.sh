@@ -10,6 +10,7 @@ ZIP_PATH="$ROOT/dist/openai-work-codex-regulator-companion-v${VERSION}-macos.zip
 RELAY_BASE_URL="${REGULATOR_RELAY_BASE_URL:-}"
 BUILD_NUMBER="${REGULATOR_BUILD_NUMBER:-${GITHUB_RUN_NUMBER:-1}}"
 HELPER_PATH="${REGULATOR_CODEXBAR_HELPER_PATH:-}"
+SWIFT_ARCH_ARGS=(--arch arm64 --arch x86_64)
 
 if [[ "$VERSION" != 3.* ]]; then
   echo "macOS Companion packager requires VERSION 3.x" >&2
@@ -24,8 +25,8 @@ fi
 mkdir -p "$ROOT/dist"
 rm -rf "$APP_DIR" "$ZIP_PATH"
 
-swift build -c release --package-path "$PACKAGE_DIR"
-BIN_DIR="$(swift build -c release --package-path "$PACKAGE_DIR" --show-bin-path)"
+swift build -c release --package-path "$PACKAGE_DIR" "${SWIFT_ARCH_ARGS[@]}"
+BIN_DIR="$(swift build -c release --package-path "$PACKAGE_DIR" "${SWIFT_ARCH_ARGS[@]}" --show-bin-path)"
 BIN_PATH="$BIN_DIR/RegulatorCompanion"
 
 if [[ ! -x "$BIN_PATH" ]]; then
@@ -33,20 +34,33 @@ if [[ ! -x "$BIN_PATH" ]]; then
   exit 1
 fi
 
-mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources" "$APP_DIR/Contents/Helpers"
+APP_ARCHS="$(lipo -archs "$BIN_PATH")"
+if [[ "$APP_ARCHS" != *arm64* || "$APP_ARCHS" != *x86_64* ]]; then
+  echo "Companion executable is not universal: $APP_ARCHS" >&2
+  exit 1
+fi
+
+mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 cp "$BIN_PATH" "$APP_DIR/Contents/MacOS/RegulatorCompanion"
 chmod 755 "$APP_DIR/Contents/MacOS/RegulatorCompanion"
+cp "$ROOT/THIRD_PARTY_NOTICES.md" "$APP_DIR/Contents/Resources/THIRD_PARTY_NOTICES.md"
 
+# Bundle the helper next to the main executable so Foundation's
+# url(forAuxiliaryExecutable:) can resolve it without user configuration.
 if [[ -n "$HELPER_PATH" ]]; then
   if [[ ! -x "$HELPER_PATH" ]]; then
     echo "REGULATOR_CODEXBAR_HELPER_PATH is not executable: $HELPER_PATH" >&2
     exit 1
   fi
-  cp "$HELPER_PATH" "$APP_DIR/Contents/Helpers/CodexBarCLI"
-  chmod 755 "$APP_DIR/Contents/Helpers/CodexBarCLI"
+  cp "$HELPER_PATH" "$APP_DIR/Contents/MacOS/CodexBarCLI"
+  chmod 755 "$APP_DIR/Contents/MacOS/CodexBarCLI"
+  HELPER_ARCHS="$(lipo -archs "$APP_DIR/Contents/MacOS/CodexBarCLI")"
+  if [[ "$HELPER_ARCHS" != *arm64* || "$HELPER_ARCHS" != *x86_64* ]]; then
+    echo "bundled CodexBar sensor is not universal: $HELPER_ARCHS" >&2
+    exit 1
+  fi
 fi
 
-/usr/libexec/PlistBuddy -c 'Clear dict' "$APP_DIR/Contents/Info.plist" 2>/dev/null || true
 cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -88,11 +102,12 @@ codesign --force --deep --sign - "$APP_DIR"
 codesign --verify --deep --strict "$APP_DIR"
 
 if [[ -n "$HELPER_PATH" ]]; then
-  test -x "$APP_DIR/Contents/Helpers/CodexBarCLI"
+  test -x "$APP_DIR/Contents/MacOS/CodexBarCLI"
 fi
 
 ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" "$ZIP_PATH"
 
 echo "macOS Companion development artifact: $ZIP_PATH"
+echo "Companion architectures: $APP_ARCHS"
 echo "relay configured: $([[ -n "$RELAY_BASE_URL" ]] && echo yes || echo no)"
 echo "sensor helper bundled: $([[ -n "$HELPER_PATH" ]] && echo yes || echo no)"
