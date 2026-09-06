@@ -1,31 +1,183 @@
-# Использование openai-work-codex-regulator v2.2
+# Использование openai-work-codex-regulator v3.0
+
+> `v3.0` находится в разработке. Stable release пока остаётся `v2.2`.
 
 ## 1. Базовый вызов
 
+Нормальный сценарий больше не требует вручную прикладывать quota snapshot:
+
 ```text
 Используй openai-work-codex-regulator.
-Сохраняй недельную Work/Codex квоту, но не останавливай critical path только из-за nominal 24h target.
-Квота и темп работы имеют равный приоритет после hard safety/quality gates.
+Оркестрируй задачу через ChatGPT, Work и Codex.
 Задача: <описание>
 ```
 
-## 2. Минимальный quota snapshot
+При quota-sensitive решении regulator сам должен получить актуальный Work/Codex snapshot через доступный telemetry tool.
 
 ```text
-Weekly used/remaining: <percent>
-Weekly reset: <timestamp/duration>
-5h used/reset: <если показано>
-Meter semantics: USED / REMAINING
-Meter granularity: <если известно>
+CHATGPT_PRIMARY_ORCHESTRATOR=YES
+AUTO_QUOTA_TELEMETRY=DEFAULT
+MANUAL_QUOTA_INPUT=FALLBACK_ONLY
 ```
 
-Token/rate-card conversion не нужен.
+## 2. Что пользователь делает с квотой
 
-## 3. Что изменилось с v2.1
+В штатном режиме — ничего.
 
-v2.1 фиксировал 24h slice и мог выдать `DEFER_FOR_QUALITY`, если хороший pass был чуть дороже текущего slice.
+Не нужно периодически:
 
-v2.2 использует absolute trajectory:
+- открывать Usage;
+- смотреть weekly percentage;
+- копировать reset time;
+- пересчитывать remaining/used;
+- отправлять эти значения ChatGPT после каждого pass.
+
+Manual snapshot остаётся допустимым fallback, если automatic telemetry недоступна именно тогда, когда без свежей квоты нельзя безопасно принять следующее agentic-решение.
+
+## 3. Что делает ChatGPT
+
+В нормальном `CHATGPT_PRIMARY` режиме:
+
+```text
+user goal
+  ↓
+ChatGPT regulator
+  ↓
+quota-sensitive decision?
+  ├─ no  → обычная Chat work
+  └─ yes → get_quota_snapshot()
+               ↓
+          normalized telemetry
+               ↓
+          v2.2 controller
+               ↓
+          Work / Codex / alternative
+```
+
+ChatGPT остаётся control plane. Connected telemetry app/tool только предоставляет meter state.
+
+## 4. Cloud/local boundary
+
+Browser/cloud ChatGPT не должен делать вид, что умеет напрямую вызвать локальный CodexBar или прочитать localhost пользователя.
+
+```text
+CHAT_LOCALHOST_ASSUMPTION=FORBIDDEN
+CHAT_LOCAL_SHELL_ASSUMPTION=FORBIDDEN
+```
+
+Для Chat автоматическая квота должна приходить через доступный connected app/tool. В локальном Codex standalone тот же normalized contract может заполняться напрямую локальным adapter, если shell/tool access реально существует.
+
+## 5. Normalized quota snapshot
+
+Минимальный успешный snapshot:
+
+```text
+ALLOWANCE_DOMAIN=WORK_CODEX
+SNAPSHOT_AT=<timestamp>
+QUOTA_TELEMETRY_SOURCE=<provider>
+QUOTA_TELEMETRY_STATE=FRESH
+WEEKLY_METER_SEMANTICS=USED
+WEEKLY_USED=<percent>
+WEEKLY_RESET=<timestamp|unknown>
+FIVE_HOUR_USED=<percent|unknown>
+FIVE_HOUR_RESET=<timestamp|unknown>
+```
+
+Token/rate-card conversion не нужен и не используется.
+
+## 6. Когда telemetry обновляется
+
+Regulator не должен опрашивать meter на каждое сообщение.
+
+Обновление нужно:
+
+```text
+AUTO_QUOTA_REFRESH=BEFORE_AGENTIC_PASS
+AUTO_QUOTA_REFRESH=AFTER_MEANINGFUL_AGENTIC_PASS
+AUTO_QUOTA_REFRESH=WHEN_PENDING_BURN_MATTERS
+AUTO_QUOTA_REFRESH=WHEN_SNAPSHOT_STALE
+AUTO_QUOTA_REFRESH=ON_RESET_OR_EPOCH_SUSPECTED
+```
+
+Это снижает лишний шум и оставляет автоматизацию там, где она влияет на реальное решение.
+
+## 7. Если automatic telemetry недоступна
+
+Не спрашивать manual quota немедленно, если можно продолжить полезную Chat work.
+
+Порядок:
+
+1. продолжить planning/review/handoff, если это двигает проект;
+2. повторить automatic telemetry, когда quota снова станет decision-critical;
+3. только если следующий Work/Codex pass нельзя безопасно admitted без свежего snapshot, попросить user-provided first-party state;
+4. после восстановления automatic telemetry вернуться к normal path.
+
+```text
+MANUAL_QUOTA_INPUT_REQUIRED=NO
+MANUAL_QUOTA_INPUT_ACCEPTED=YES
+```
+
+## 8. Telemetry freshness
+
+```text
+QUOTA_TELEMETRY_STATE=<FRESH|STALE|UNAVAILABLE|CONFLICT|UNKNOWN>
+```
+
+- `FRESH` — можно использовать для quota-sensitive admission;
+- `STALE` — сначала попытаться обновить;
+- `UNAVAILABLE` — automatic source временно недоступен;
+- `CONFLICT` — reset/account epoch выглядит противоречиво;
+- `UNKNOWN` — semantics нельзя нормализовать без догадок.
+
+Нельзя превращать stale/unknown snapshot в «актуальный» только потому, что он удобен для продолжения работы.
+
+## 9. CodexBar reference adapter
+
+Для разработки `v3.0` первый reference sensor — CodexBar-compatible JSON.
+
+Нормализатор:
+
+```bash
+python3 scripts/quota_telemetry.py --input snapshot.json --pretty
+```
+
+Self-test:
+
+```bash
+python3 scripts/quota_telemetry.py --self-test
+```
+
+Важно: это developer/debug path, а не финальный onboarding пользователя.
+
+Window semantics определяются по длительности:
+
+```text
+300 minutes   → FIVE_HOUR
+10080 minutes → WEEKLY
+other         → OTHER_WINDOW
+```
+
+```text
+RATE_WINDOW_POSITION_IS_NOT_SEMANTICS
+```
+
+`primary` и `secondary` сами по себе ничего не доказывают.
+
+## 10. Что telemetry provider не делает
+
+Provider не решает:
+
+- запускать ли Work/Codex;
+- использовать ли future advance;
+- какой model tier выбрать;
+- насколько критичен workflow pace;
+- покупать ли credits/reset.
+
+Даже если сторонний provider имеет собственный `guard`/pacing, regulator не использует его как admission policy.
+
+## 11. v2.2 controller остаётся ядром
+
+Для свежего normalized snapshot работает прежняя математика:
 
 ```text
 one epoch anchor
@@ -34,28 +186,20 @@ one epoch anchor
 → quota risk vs pace risk
 ```
 
-Поэтому 24h больше не является обязательным ожиданием.
-
-## 4. Fresh-week reference
-
-Для `U0=0`, `H0=168h`, zero reservations/buffer:
+Fresh-week reference для `U0=0`, `H0=168h`, zero reservations/buffer:
 
 ```text
 BASE_ACTION_HEADROOM_PP ≈ 12.8571
 MAX_ADVANCE_HEADROOM_PP ≈ 38.5714
 ```
 
-Первое — нормальный 24h target. Второе — абсолютный максимум bounded advance horizon, а не новый daily budget.
+Первое — normal 24h target. Второе — bounded maximum advance horizon, а не новый daily budget.
 
-## 5. Equal-priority admission
-
-Определить:
+## 12. Equal-priority admission
 
 ```text
 PACE_RISK_IF_DEFER = NONE|LOW|MEDIUM|HIGH|CRITICAL
 ```
-
-Соответствия:
 
 ```text
 NONE=0.00
@@ -65,13 +209,12 @@ HIGH=0.75
 CRITICAL=1.00
 ```
 
-Если pass помещается в normal 24h headroom → `LAUNCH_BASE`.
+Если pass помещается в normal headroom → `LAUNCH_BASE`.
 
 Если требует future advance:
 
 ```text
-QUOTA_RISK_IF_LAUNCH =
-  needed_advance / borrowable_extra
+QUOTA_RISK_IF_LAUNCH = needed_advance / borrowable_extra
 ```
 
 При:
@@ -82,31 +225,19 @@ QUOTA_RISK_IF_LAUNCH <= PACE_RISK_IF_DEFER
 
 и pass внутри max-advance horizon → `LAUNCH_WITH_ADVANCE`.
 
-## 6. Pace-risk examples
+## 13. Pending meter
 
-- LOW — есть полезная независимая работа; сутки почти ничего не ломают.
-- MEDIUM — задержка создаёт rework/throughput penalty, но critical path не закрыт.
-- HIGH — gate блокирует дальнейшую реализацию или создаёт заметный idle window.
-- CRITICAL — incident/deadline/revenue/production/reputation window под риском.
-
-## 7. Если launch не проходит
-
-Не переходить сразу к ожиданию:
-
-1. убрать duplicate work/context;
-2. reuse accepted facts;
-3. quality-preserving split/batch;
-4. продолжить Chat planning/review/handoff;
-5. использовать уже разрешённый non-shared external tool;
-6. только затем defer.
+После meaningful Work/Codex pass automatic refresh может сразу показать тот же percentage. Это не означает burn=0, если aggregate reporting может отставать.
 
 ```text
-MEANINGFUL_PROGRESS_WITHOUT_AGENTIC=YES|NO|UNKNOWN
+PENDING_BURN=YES
 ```
 
-## 8. Chat → Codex handoff
+Большой новый future advance не stack'ится поверх такого unknown burn. Полезная Chat preparation/review при этом продолжается.
 
-Если regulator работает в Chat:
+Поздний fresh snapshot внутри того же epoch может разрешить pending state и дать observed aggregate delta.
+
+## 14. Chat → Codex handoff
 
 ```text
 CONTROL_PLANE_OWNER=CHAT
@@ -114,12 +245,13 @@ HANDOFF_SELF_CONTAINED=YES
 EXECUTOR_SKILL_REQUIRED=NO
 ```
 
-Chat сам решает quota/model/admission. Codex получает готовый execution packet и не должен искать/загружать regulator.
+Chat решает quota/model/admission. Codex получает готовый execution packet и не должен искать/загружать regulator.
 
 Не включать в обычный Codex prompt:
 
 ```text
 QUOTA_EPOCH_ID
+telemetry source/plumbing
 trajectory headroom
 quota/pace risk
 paid-reset state
@@ -127,7 +259,7 @@ paid-reset state
 
 Передавать только goal/fact pack/scope/tests/rollback/stop conditions.
 
-## 9. Codex packet example
+## 15. Codex packet example
 
 ```text
 PASS_ID: <id>
@@ -172,19 +304,29 @@ STOP IF:
 <drift/scope expansion/safety issue>
 ```
 
-## 10. Direct Codex use
+## 16. Standalone Codex / Work
 
-Если skill установлен и прямо вызван внутри Codex, Codex может быть собственным `CONTROL_PLANE_OWNER`. Но последующие cross-surface handoffs всё равно self-contained.
+Прямой вызов regulator остаётся поддержанным:
 
-## 11. Pending meter
+```text
+ORCHESTRATION_MODE=CODEX_STANDALONE
+```
 
-`PENDING_BURN=YES` блокирует новый большой future advance до plausibly updated aggregate telemetry. Это не блокирует полезную Chat preparation/review.
+или:
 
-## 12. Quality and 5h
+```text
+ORCHESTRATION_MODE=WORK_STANDALONE
+```
 
-`QUALITY_FLOOR=NON_NEGOTIABLE` и отдельный 5h circuit breaker стоят выше quota/pace balancing. Высокая срочность не разрешает insufficient model, missing tests или обход локального limit.
+В таком режиме текущая surface может быть `CONTROL_PLANE_OWNER` для локального pass и использовать доступный telemetry adapter/tool. Последующие cross-surface handoffs всё равно self-contained.
 
-## 13. Reference calculator
+## 17. Zero-maintenance onboarding
+
+Финальная v3.0 не считается готовой, если обычная установка требует Terminal, Homebrew, ручной установки CodexBar, редактирования JSON/YAML, token copy/paste, настройки localhost/tunnel или регулярных quota-сообщений.
+
+До выполнения этого критерия feature-ветка остаётся development и не должна считаться release-ready.
+
+## 18. Reference calculator
 
 ```bash
 python3 scripts/weekly_quota_controller.py \
@@ -197,4 +339,4 @@ python3 scripts/weekly_quota_controller.py \
   --self-test
 ```
 
-Главная цель v2.2 — максимизировать устойчивый полезный прогресс в пределах недельной shared allowance, не отдавая автоматический приоритет ни экономии квоты, ни скорости процесса.
+Главная цель v3.0 — убрать quota bookkeeping из внимания пользователя, не перенося orchestration из ChatGPT в telemetry provider и не ослабляя математические/безопасностные гарантии v2.2.
