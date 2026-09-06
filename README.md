@@ -1,164 +1,135 @@
 # OpenAI Work + Codex Regulator
 
-**Version:** v2.1
+**Version:** v2.2
 
-`openai-work-codex-regulator` — quota-aware operational skill для ChatGPT Work и Codex. Он выбирает правильную surface/model configuration, удерживает Work и Codex внутри общей agentic allowance и теперь управляет недельной квотой как адаптивной системой, рассчитанной на работу на протяжении всего reset window.
+`openai-work-codex-regulator` — operational skill for ChatGPT orchestration across Chat, Work and Codex with shared Work/Codex quota awareness, quality/safety controls and evidence-based execution.
 
-## v2.1: adaptive weekly quota controller
+## v2.2: balanced quota + workflow pace
 
-Главное изменение v2.1 — недельная квота больше не планируется статическим делением остатка.
+v2.1 successfully prevented front-loading but treated the current 24h quota slice too much like a hard launch boundary. In real testing that could preserve weekly allowance at the cost of a 24h workflow stall.
+
+v2.2 changes the objective:
 
 ```text
-weekly meter
-→ quota epoch
-→ fixed rolling 24h control slice
-→ observed shared-pool burn
-→ conservative pass estimate
-→ quality-floor admission
-→ feedback re-plan
+hard safety + quality
+        ↓
+quota continuity  =  workflow pace
+        50%               50%
 ```
 
-Контроллер:
+A 24h amount is now the **normal look-ahead target**, not a mandatory wait timer.
 
-- нормализует `WEEKLY_USED` / `WEEKLY_REMAINING` по фактической подписи UI;
-- использует реальный `WEEKLY_RESET`, а не предполагаемый календарный понедельник;
-- создаёт `QUOTA_EPOCH_ID` и полностью re-anchor после reset/plan/allowance change;
-- держит до 10 percentage points risk reserve, но никогда больше 50% текущего остатка;
-- линейно освобождает reserve в последние 72 часа, чтобы buffer не оставался неиспользованным;
-- задаёт fixed 24h `CONTROL_SLICE_BUDGET_PP`;
-- не выдаёт новый полный дневной budget после каждого pass;
-- измеряет total shared Work/Codex burn по aggregate weekly meter;
-- строит conservative `B_SAFE` по максимум пяти сопоставимым наблюдениям;
-- учитывает meter granularity и pending/lagged usage;
-- отдельно проверяет 5-hour window;
-- резервирует Scheduled Task burn;
-- не понижает качество ради экономии.
+The controller uses one epoch-anchored cumulative trajectory:
 
-Подробная математика: `references/10_WEEKLY_QUOTA_CONTROLLER.md`.
-
-Reference calculator:
-
-```bash
-python3 scripts/weekly_quota_controller.py \
-  --weekly-used 37 \
-  --hours-to-reset 96
+```text
+weekly meter/reset
+→ quota epoch anchor
+→ absolute target trajectory T(H)
+→ 24h base action headroom
+→ bounded 72h future advance
+→ B_SAFE
+→ quota-risk vs pace-risk comparison
+→ launch / launch-with-advance / productive alternative / defer
 ```
 
-## Quality floor
+## Why the trajectory is safer than reissuing daily budgets
 
-v2.1 вводит обязательный:
+All decisions stay tied to the same `U0/H0` anchor until reset/allowance change. After a pass, actual shared burn is subtracted from the same cumulative curve; recomputing does not create another full daily allowance.
+
+Fresh normalized 7-day reference:
+
+```text
+BASE_ACTION_HEADROOM_PP ≈ 12.8571
+MAX_ADVANCE_HEADROOM_PP ≈ 38.5714
+```
+
+The second number is only the bounded future-advance ceiling, not normal day-one spending.
+
+## Equal-priority admission
+
+```text
+BALANCED_PRIORITY=QUOTA_50_PACE_50
+```
+
+Pace risk:
+
+```text
+NONE=0.00
+LOW=0.25
+MEDIUM=0.50
+HIGH=0.75
+CRITICAL=1.00
+```
+
+For a pass above base headroom:
+
+```text
+QUOTA_RISK_IF_LAUNCH = needed_advance / borrowable_extra
+```
+
+If the quality-sufficient pass remains inside max advance and quota risk is no greater than pace risk of waiting:
+
+```text
+QUOTA_DECISION=LAUNCH_WITH_ADVANCE
+```
+
+This prevents automatic 24h idle periods when the active gate blocks the project's critical path.
+
+## Control plane / execution plane
+
+v2.2 also fixes cross-surface orchestration:
+
+```text
+CONTROL_PLANE_OWNER=<surface with regulator>
+HANDOFF_SELF_CONTAINED=YES
+EXECUTOR_SKILL_REQUIRED=NO
+```
+
+If Chat has the regulator and routes work to Codex, Chat resolves quota/model/admission and sends a complete technical packet. Codex does **not** need this skill installed and must not be told to load it as a prerequisite.
+
+Quota trajectory/risk math stays in Chat. Executor prompt carries only goal, accepted fact pack, scope, tests/evidence, rollback and stop conditions.
+
+Detailed handoff contract: `references/11_ORCHESTRATION_AND_HANDOFF.md`.
+
+## Progress-preserving fallback
+
+When a full agentic pass should not launch, v2.2 does not jump straight to waiting. It checks for meaningful Chat planning/review/handoff, accepted-evidence reuse, quality-preserving split/batching or an already-approved non-shared execution path.
+
+```text
+MEANINGFUL_PROGRESS_WITHOUT_AGENTIC=<YES|NO|UNKNOWN>
+```
+
+Pure defer is the last option when no quality-preserving useful progress remains.
+
+## Quality / safety remain hard constraints
 
 ```text
 QUALITY_FLOOR=NON_NEGOTIABLE
 ```
 
-Если нужный pass не помещается в текущий quota slice, регулятор сначала уменьшает waste:
+Equal quota/pace priority does not weaken permissions, target authorization, 5h limits, mandatory sources/tests, security baseline, rollback or minimum sufficient model capability.
 
-- reuse compact handoff;
-- убирает duplicate research/audits/agents;
-- сокращает non-decision-critical context;
-- выбирает cheaper tier/effort только если он всё ещё independently sufficient;
-- переносит lower-value work.
-
-Он не должен:
-
-- убирать обязательные sources/tests;
-- использовать stale evidence вместо fresh;
-- запускать заведомо слабую модель;
-- принимать incomplete gate только ради того, чтобы «что-то сделать сегодня».
-
-Если quality-sufficient pass не помещается:
-
-```text
-QUOTA_DECISION=DEFER_FOR_QUALITY
-```
-
-## Work + Codex shared allowance
-
-Для agentic work:
+## Shared allowance
 
 ```text
 ALLOWANCE_DOMAIN=WORK_CODEX
 ```
 
-Work и Codex не являются независимыми недельными корзинами. Любой подтверждённый consumer той же shared allowance уменьшает текущий slice headroom.
+Work, Codex and other supported agentic features may share allowance. Chat-model allowances/API billing are separate and are not treated as spare Work/Codex capacity.
 
-Отдельные Chat-model allowances и API billing не используются как запас или коэффициент Work/Codex quota.
-
-## Core routing
-
-```text
-Chat  = orchestration / review / bounded lookup
-Work  = multi-step browser/research/apps/deliverables/actions
-Codex = repo/code/terminal/tests/server/deploy
-
-ONE_GATE = ONE_PRIMARY_SURFACE
-```
-
-Model architecture v2 сохраняется:
+## Model architecture
 
 ```text
 MODEL_PROFILE=TIERED
-  LUNA  = high-volume routine work
+  LUNA  = routine/high-volume
   TERRA = balanced default
   SOL   = consequential synthesis
 
 MODEL_PROFILE=ASTRA
-  exceptional bounded end-to-end execution
+  exceptional bounded end-to-end work
 ```
 
-Astra требует отдельного admission contract; quota pressure не является основанием искусственно понижать model capability ниже minimum sufficient.
-
-## Weekly controller fields
-
-```text
-QUOTA_EPOCH_ID=
-WEEKLY_USED=
-WEEKLY_RESET=
-HOURS_TO_WEEKLY_RESET=
-CONTROL_SLICE_ID=
-CONTROL_SLICE_START_WEEKLY_USED_PP=
-CONTROL_SLICE_BUDGET_PP=
-SLICE_SPENT_PP=
-EFFECTIVE_SLICE_HEADROOM_PP=
-BURN_ESTIMATE_WEEKLY_PP=
-BURN_ESTIMATE_CONFIDENCE=
-CONTINUITY_FEASIBLE=
-QUALITY_FLOOR=NON_NEGOTIABLE
-```
-
-## Exact first-day example
-
-Для fresh normalized 7-day weekly window:
-
-```text
-WEEKLY_USED = 0
-WEEKLY_REMAINING = 100
-HOURS_TO_RESET = 168
-BASE_WEEKLY_RESERVE_PP = 10
-
-schedulable early allowance = 90 pp
-
-first 24h envelope =
-90 * 24 / 168
-= 12.857142857 pp
-```
-
-Reserve постепенно освобождается в последние 72 часа. Если фактический burn ниже plan — future daily envelopes растут. Если выше — уменьшаются.
-
-Это feedback control: он не предполагает фиксированную цену одного pass.
-
-## Reset behavior
-
-Любой reset/allowance change создаёт новый quota epoch.
-
-Платный weekly reset по умолчанию запрещён:
-
-```text
-PAID_WEEKLY_RESET_ALLOWED=NO
-```
-
-Если пользователь отдельно разрешает покупку, это class-4 money action. После применения reset старый slice ledger уничтожается и controller строится заново из current first-party UI.
+Quota pressure may select cheaper options only when they remain independently sufficient.
 
 ## Repository structure
 
@@ -175,13 +146,16 @@ references/
   08_MODEL_TIER_ROUTING.md
   09_ASTRA_EXECUTION.md
   10_WEEKLY_QUOTA_CONTROLLER.md
+  11_ORCHESTRATION_AND_HANDOFF.md
   SOURCE_MAP.md
 docs/
 scripts/
   validate_repo.py
   package_release.py
   weekly_quota_controller.py
-tests/TEST_CASES.md
+tests/
+  TEST_CASES.md
+  TEST_CASES_V2_2.md
 ```
 
 ## Validation
@@ -189,16 +163,12 @@ tests/TEST_CASES.md
 ```bash
 python3 scripts/validate_repo.py
 python3 scripts/weekly_quota_controller.py \
-  --weekly-used 0 \
-  --hours-to-reset 168 \
+  --anchor-weekly-used 0 \
+  --anchor-hours-to-reset 168 \
+  --hours-to-reset-now 168 \
+  --current-weekly-used 0 \
   --self-test
 python3 scripts/package_release.py
 ```
 
-The repository validator runs the weekly-controller self-test as part of v2.1 validation.
-
-## Product facts
-
-Usage/reset/model facts are time-sensitive. First-party account UI remains authoritative for actual remaining usage and reset timestamps.
-
-`references/SOURCE_MAP.md` records the official OpenAI sources re-verified for v2.1 on 2026-09-05.
+Product/model/usage facts are time-sensitive. Current first-party OpenAI docs and actual account/workspace UI remain authoritative.

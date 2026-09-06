@@ -1,13 +1,28 @@
 # Codex technical work discipline
 
-**Version:** 1.1  
+**Version:** 2.2  
 **Status:** normative
 
 ## 1. Codex role
 
 Codex owns technical implementation: repository, code, commands, tests, Git and technical systems.
 
-## 2. Read-only first
+## 2. Executor independence
+
+A Codex handoff must be self-contained:
+
+```text
+HANDOFF_SELF_CONTAINED=YES
+EXECUTOR_SKILL_REQUIRED=NO
+```
+
+If Chat used the regulator to route/admit the pass, Codex does **not** need the regulator installed and must not be asked to locate/load/apply it as a prerequisite.
+
+Chat/control plane resolves quota/model/admission before launch. Codex receives only the execution contract.
+
+Reading `SKILL.md` remains allowed when it is itself part of the repository/task read/write scope.
+
+## 3. Read-only first
 
 Before mutation establish:
 
@@ -22,20 +37,20 @@ existing drift
 
 Stop on unexplained drift.
 
-## 3. Exact scope
+## 4. Exact scope
 
-Prompt must contain:
+Executor packet must contain:
 
 - allowed read scope;
 - allowed write scope;
 - no-touch list;
-- tests;
-- rollback point;
+- tests/evidence;
+- rollback;
 - stop conditions.
 
 No opportunistic refactor.
 
-## 4. Class 4
+## 5. Class 4
 
 First entry:
 
@@ -45,38 +60,39 @@ NO MUTATION.
 STOP AFTER REPORT.
 ```
 
-After an approved plan:
+After approved plan:
 
 ```text
 BOUNDED MUTATION ONLY.
-If baseline drift or scope expansion is required: STOP.
+STOP ON DRIFT OR SCOPE EXPANSION.
 ```
 
-## 5. Git
+## 6. Git
 
-- inspect `git status` before change;
+- inspect `git status`;
 - exact-file staging;
 - never `git add .`;
 - no force push;
-- no secrets/customer data/backups/db files;
-- push/deploy only when explicitly part of the pass.
+- no secrets/customer data/backups/db files outside explicit necessary scope;
+- push/deploy only when explicitly inside the gate.
 
-## 6. Evidence
+## 7. Evidence
 
-A Codex completion claim needs relevant evidence:
+Completion needs relevant changed files, diff summary, test/build/lint/runtime evidence and final Git state.
 
-- changed files;
-- diff summary;
-- test commands/results;
-- build/lint if applicable;
-- runtime verification if applicable;
-- Git state.
+## 8. Handoff efficiency
 
-## 7. Work handoff
+If Chat/Work already researched facts, Codex receives a compact accepted fact pack and should not repeat the same public research unless implementation requires a specific verification.
 
-If Work already researched external facts, pass a compact fact pack to Codex. Codex should not spend shared usage re-browsing the same public sources unless the implementation requires a specific verification.
+Do not forward control-plane-only fields such as quota epoch, trajectory headroom, quota/pace risk or paid-reset state unless Codex's explicit task is to inspect those values.
 
-## 8. Official sources
+Optional executor instruction:
+
+```text
+EFFICIENCY_POSTURE=MINIMIZE_WASTE_WITHOUT_QUALITY_LOSS
+```
+
+## 9. Official sources
 
 - https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan
 - https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex

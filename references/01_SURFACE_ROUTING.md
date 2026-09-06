@@ -1,130 +1,103 @@
 # Surface routing: Chat vs Work vs Codex
 
-**Version:** 1.1  
-**Verified:** 2026-08-22  
+**Version:** 2.2  
+**Verified:** 2026-09-06  
 **Status:** normative
 
 ## 1. Product roles
 
-OpenAI currently documents the experiences as:
+Current OpenAI guidance distinguishes:
 
-- Chat — fast conversational help and everyday questions;
-- Work — longer, multi-step research/analysis and finished deliverables, with files/apps/browser-style work and Scheduled Tasks where available;
-- Codex — software development and technical work: code, tests, commands, repositories.
-
-This regulator turns those product roles into a quota-saving routing rule.
+- Chat — conversational/bounded assistance;
+- Work — longer multi-step research/apps/deliverables/actions;
+- Codex — software development and technical work.
 
 ## 2. Routing rule
 
-Use the cheapest surface that has the capabilities the task genuinely needs.
+Use the least expensive surface that can close the gate at the required quality.
 
 ### CHAT
 
-Use for:
+Use for orchestration, planning, review, prompt/handoff, supplied-material analysis and bounded web/file work.
 
-- discussing strategy;
-- reviewing an agent report;
-- drafting the next bounded prompt;
-- deciding between alternatives;
-- compact handoff;
-- ordinary questions.
-
-Do not start an agentic run merely because the task is important.
-
-### Bounded Chat (CHAT_BOUNDED_WEB)
-
-Ordinary Chat with its built-in web/file capabilities is cheaper than a full agentic pass. A simple task must not automatically lose to Work.
-
-`CHAT_BOUNDED_WEB` fits when all of the following hold:
-
-- simple lookup / short web research;
-- usually no more than 3–5 public pages;
-- no login;
-- no persistent browser state;
-- no external action;
-- no autonomous monitoring;
-- no schedule;
-- no complex multi-step connected-app workflow;
-- ordinary Chat already has the web/file capabilities needed.
-
-Examples that must NOT automatically route to WORK:
-
-- find one current fact;
-- check 1–3 public sources;
-- briefly summarize an attached file;
-- analyze material the user already supplied;
-- create a simple artifact from already-supplied content when no multi-step agentic work is required.
+`CHAT_BOUNDED_WEB` fits simple read-only work, usually within 1–5 public sources, with no login, persistent browser state, external action, schedule or complex connected-app workflow.
 
 ### WORK
 
-Use for:
-
-- live web/browser research beyond bounded Chat scope;
-- connected apps/files;
-- multi-source fact packs of significant volume;
-- office/document deliverables;
-- scheduled monitoring;
-- multi-step non-code workflows;
-- controlled external actions with approval.
+Use for substantial multi-step browser/research/apps/files/deliverables/scheduled monitoring/controlled external actions.
 
 ### CODEX
 
-Use for:
+Use for repository/code/terminal/tests/build/Git/server/config/deploy/debugging.
 
-- source code;
-- repository inspection/change;
-- terminal commands;
-- test/build/lint;
-- Git diff/commit;
-- technical server/config/deploy;
-- debugging systems.
+## 3. Agentic gate
 
-## 2.1. WHY_AGENTIC gate
-
-Before any expensive agentic pass, record:
+Before Work/Codex:
 
 ```text
-WHY_AGENTIC=<why ordinary Chat is insufficient>
-VALUE_OUTPUT=<which verifiable result closes the gate>
+WHY_AGENTIC=<why Chat is insufficient>
+VALUE_OUTPUT=<verifiable gate-closing result>
 ```
 
-If `WHY_AGENTIC` does not explain why ordinary Chat is insufficient, prefer CHAT or PREPARE.
+Do not spend shared agentic quota merely because the task is important.
 
-## 2.2. User surface override
+## 4. User surface override
+
+If the regulator recommends Chat to save quota but the user explicitly insists on Work after one concise warning, record:
 
 ```text
 USER_SURFACE_OVERRIDE=YES
 ```
 
-If the user explicitly insists on Work after one quota-saving CHAT recommendation, and safety/quota gates pass, respect the user's choice. The override does not cancel safety gates, paid-credit policy, capability gates or forbidden actions.
+Respect the chosen surface only if safety, quota/pace, permissions, paid-spend and action gates still pass. Override never creates missing capability or permission.
 
-## 3. One-gate owner
+## 5. One gate / one primary executor
 
 ```text
 ONE_GATE = ONE_PRIMARY_SURFACE
 ```
 
-If Work already produced a sufficient research/fact pack, Codex receives a compact handoff and does not repeat full research.
+Do not duplicate full research in Codex after Work/Chat already produced an accepted fact pack. Do not repeat a technical audit in Work after Codex already established the technical state unless a distinct independent verification is required.
 
-If Codex already audited a repo/config, Work does not perform a second full technical audit unless a distinct independent verification is explicitly required.
+## 6. Control plane vs executor
 
-## 4. Cross-surface handoff
+When regulator is running in Chat and routes to Work/Codex:
 
-Minimum package:
+```text
+CONTROL_PLANE_OWNER=CHAT
+HANDOFF_SELF_CONTAINED=YES
+EXECUTOR_SKILL_REQUIRED=NO
+```
+
+The downstream executor must not be required to have this regulator installed. Chat resolves quota/model/admission and forwards only the bounded execution contract.
+
+If user directly invokes an installed regulator inside Work/Codex, that surface may locally own its control plane for the current pass.
+
+## 7. Cross-surface handoff
+
+Executor packet should contain:
 
 ```text
 GOAL
-FACTS / SOURCES
+FACT PACK
 DECISIONS
-EXACT SCOPE
+EXACT READ/WRITE/ACTION SCOPE
 FORBIDDEN SCOPE
-OPEN QUESTIONS
-EXPECTED OUTPUT
+TESTS / EVIDENCE
+ROLLBACK
 STOP CONDITION
 ```
 
-Avoid copying the entire source conversation.
+Do not copy full conversation or internal quota-controller state unless it is itself task data.
 
-## 5. Official source
+## 8. Progress under quota pressure
+
+If an agentic pass should not launch now, routing does not end with automatic waiting. First check whether Chat can make meaningful progress through planning, review, compact handoff, supplied-file analysis or other non-agentic work.
+
+```text
+MEANINGFUL_PROGRESS_WITHOUT_AGENTIC=<YES|NO|UNKNOWN>
+```
+
+## 9. Official source
 
 - https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex

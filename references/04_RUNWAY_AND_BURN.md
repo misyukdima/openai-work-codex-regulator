@@ -1,24 +1,18 @@
 # Project runway, pass discipline and burn accounting
 
-**Version:** 2.1  
+**Version:** 2.2  
 **Status:** normative
 
-## 1. Two different runways
+## 1. Two runways
 
-v2.1 explicitly separates:
+1. **Project runway** — meaningful gates/passes remaining.
+2. **Quota runway** — shared Work/Codex capacity remaining before reset.
 
-1. **project runway** — how many meaningful gates/passes remain in the project;
-2. **quota runway** — how much Work/Codex allowance can safely be used before the current weekly reset.
+A failed attempt may leave project runway unchanged while still consuming real quota.
 
-They are related but not interchangeable.
-
-A failed attempt can leave project runway unchanged while still consuming real weekly quota.
-
-Weekly continuity mathematics is normative in `references/10_WEEKLY_QUOTA_CONTROLLER.md`.
+Weekly quota/pace mathematics is normative in `references/10_WEEKLY_QUOTA_CONTROLLER.md`.
 
 ## 2. Pass definition
-
-A substantive agentic pass closes one named gate.
 
 ```text
 PASS_ID=
@@ -28,11 +22,9 @@ GATE=
 STOP AFTER REPORT
 ```
 
-A successful pass produces evidence and stops.
+One substantive pass closes one named gate and produces evidence.
 
 ## 3. Attempts
-
-An execution that consumes usage without closing the gate is an attempt, not a completed project pass.
 
 ```text
 ATTEMPT_WITHOUT_GATE_CLOSE=1
@@ -40,9 +32,7 @@ CAUSE=
 COMPENSATION=
 ```
 
-Project runway does not decrement automatically after a failed attempt.
-
-Quota state **does** move according to the actual first-party shared weekly meter.
+Failed attempts still count in the aggregate weekly meter.
 
 ## 4. Project ledger
 
@@ -56,57 +46,43 @@ GATE=
 ATTEMPTS_SINCE_LAST_GATE=
 ```
 
-Do not silently add gates.
+Do not silently add gates. If a mandatory gate appears, show the runway delta or explicitly merge/replace another gate.
 
-If a new mandatory gate appears, show the runway delta or merge/replace an existing gate explicitly.
+## 5. Quota linkage in v2.2
 
-## 5. Quota linkage
-
-For class 2–4 Work/Codex passes, link the project pass to the current quota-controller state:
+Project passes link to the controller anchor, not to a private daily budget:
 
 ```text
 QUOTA_EPOCH_ID=
-CONTROL_SLICE_ID=
-CONTROL_SLICE_BUDGET_PP=
-SLICE_SPENT_PP=
-EFFECTIVE_SLICE_HEADROOM_PP=
+TRAJECTORY_ANCHOR_WEEKLY_USED_PP=
+TRAJECTORY_ANCHOR_HOURS_TO_RESET=
+BASE_ACTION_HEADROOM_PP=
+MAX_ADVANCE_HEADROOM_PP=
 BURN_ESTIMATE_WEEKLY_PP=
-BURN_ESTIMATE_CONFIDENCE=
+PACE_RISK_IF_DEFER=
+QUOTA_RISK_IF_LAUNCH=
 QUALITY_FLOOR=NON_NEGOTIABLE
-CONTINUITY_FEASIBLE=YES|NO|UNKNOWN
 ```
 
-A pass does not receive its own independent daily budget. It spends from the currently anchored shared control slice.
+A 24h look-ahead is a normal target, not a mandatory wait boundary.
 
 ## 6. Observed burn
 
-A same-epoch before/after weekly meter gives total shared-pool change:
+Same-epoch aggregate delta:
 
 ```text
-DELTA_WEEKLY_PP =
-  WEEKLY_USED_AFTER
-  - WEEKLY_USED_BEFORE
+DELTA_WEEKLY_PP = WEEKLY_USED_AFTER - WEEKLY_USED_BEFORE
 ```
 
-For a separate 5-hour meter:
+Separate 5h delta:
 
 ```text
-DELTA_5H_PP =
-  FIVE_HOUR_USED_AFTER
-  - FIVE_HOUR_USED_BEFORE
+DELTA_5H_PP = FIVE_HOUR_USED_AFTER - FIVE_HOUR_USED_BEFORE
 ```
 
-If a reset occurs between snapshots, the corresponding delta is invalid.
+A reset invalidates the corresponding delta. Weekly and 5h pp are different denominators.
 
-Do not compare weekly pp and 5h pp as though they were the same unit.
-
-If thread/task credits are shown, record them as supporting task-level evidence:
-
-```text
-PASS_CREDITS=<value>
-```
-
-Do not convert them into weekly percentage points with a guessed coefficient.
+Task/chat credits may be supporting evidence but must not be converted into weekly pp with a guessed coefficient.
 
 ## 7. Attribution
 
@@ -115,115 +91,89 @@ OTHER_SHARED_POOL_ACTIVITY=YES|NO|UNKNOWN
 ATTRIBUTION=CLEAN|MIXED|UNKNOWN
 ```
 
-- `CLEAN`: current pass was the only meaningful confirmed shared-pool consumer between snapshots;
-- `MIXED`: another shared-pool consumer ran;
-- `UNKNOWN`: contamination state cannot be established.
+- CLEAN — current pass was the only meaningful confirmed shared-pool consumer.
+- MIXED — another shared-pool consumer ran.
+- UNKNOWN — attribution cannot be established.
 
-For **pass attribution**, `MIXED` cannot be called exact burn of one pass.
-
-For **quota continuity**, the aggregate mixed meter increase still correctly reduces total remaining allowance and current slice headroom.
-
-This distinction prevents the regulator from losing track of weekly capacity merely because attribution is imperfect.
+`MIXED` cannot be called exact pass burn, but its aggregate meter movement still reduces total quota runway.
 
 ## 8. Comparable history
 
-The v2.1 burn estimator may use at most five recent materially comparable observations.
-
-Comparable means similar:
-
-```text
-allowance configuration
-surface
-role/class
-model profile/tier
-reasoning/speed posture
-task shape/context scale
-```
-
-Record:
+Use max five recent observations comparable in allowance configuration, surface, role/class, model/profile, reasoning/speed, task shape and context scale.
 
 ```text
 BURN_HISTORY_COMPATIBLE=YES|NO|UNKNOWN
 ```
 
-Cross-reset observations may remain useful if economics stay compatible. Material model/product/plan/task-shape changes invalidate or split the history.
+Cross-reset observations may remain useful if economics remain compatible.
 
-## 9. Project priority under quota pressure
+## 9. Priority under quota pressure
 
-When the current weekly slice is constrained, do not consume it in FIFO order merely because tasks arrived first.
+Do not process backlog FIFO merely to appear fair. Prefer work that closes critical gates and reduces future rework.
 
-Prefer work that closes meaningful project gates and reduces future rework.
-
-Good quota-aware ordering can include:
+Typical value ordering:
 
 ```text
-blocking implementation
-→ verification needed to unblock next gate
+critical-path implementation
+→ verification that unblocks next gate
 → consequential research
-→ lower-value polish/optional audit
+→ optional polish/audit
 ```
 
-Priority does not waive safety or approval requirements.
+This priority never waives safety/approval.
 
-## 10. Quality-preserving anti-inflation
+## 10. Equal quota/pace priority
 
-The following pattern is normally wasteful unless each stage closes a distinct required gate:
+After safety/quality gates, quota continuity and workflow pace are equal objectives:
 
 ```text
-research
-→ duplicate research
-→ independent audit without new hypothesis
-→ implementation
-→ second unchanged audit
-→ polish
+BALANCED_PRIORITY=QUOTA_50_PACE_50
 ```
 
-Under quota pressure, first remove duplicate work, repeated context and unnecessary surfaces.
+A pass slightly above the 24h target may use bounded future advance when its normalized quota risk is no greater than the normalized pace risk of waiting.
 
-Do not reduce:
-
-- mandatory source quality;
-- required tests;
-- security baseline;
-- rollback evidence;
-- minimum sufficient model capability.
-
-If a quality-sufficient pass does not fit the current slice:
+Therefore this is no longer valid as a universal rule:
 
 ```text
-QUOTA_DECISION=DEFER_FOR_QUALITY
+quality pass does not fit 24h target -> wait 24h
 ```
 
-## 11. Reset handling
+Instead apply the v2.2 balanced controller and progress-preserving fallback ladder.
 
-A quota reset changes quota state, not project truth.
+## 11. Anti-inflation
 
-After a confirmed reset:
+Remove duplicate research, unchanged repeated audits, redundant agents and unnecessary context before reducing useful work.
 
-- preserve accepted evidence, decisions, diffs and closed gates;
-- discard old `QUOTA_EPOCH_ID` / `CONTROL_SLICE_*` state;
-- create a fresh weekly controller anchor from current first-party UI;
+Never remove mandatory source quality, tests, security baseline, rollback or minimum sufficient model capability.
+
+## 12. Reset handling
+
+A confirmed reset changes quota state, not project truth.
+
+After reset:
+
+- preserve accepted evidence/decisions/diffs/closed gates;
+- create new `QUOTA_EPOCH_ID` + trajectory anchor;
 - revalidate burn-history compatibility;
-- do not rerun completed gates just because capacity returned.
+- do not rerun completed gates merely because capacity returned.
 
-## 12. Scheduled commitments
-
-Scheduled Tasks consume future quota runway and therefore must be visible in project planning.
+## 13. Scheduled commitments
 
 ```text
 SCHEDULED_WEEKLY_COMMITMENT_PP=<estimate|unknown>
-EXPECTED_SCHEDULED_BURN_BEFORE_SLICE_END_PP=<estimate|unknown>
+EXPECTED_SHARED_BURN_DURING_LOOKAHEAD_PP=<estimate|unknown>
 ```
 
-Do not reserve the same percentage points simultaneously for a scheduled task and an interactive project pass.
+Subtract commitments before both base and future-advance headroom. Never double-allocate the same allowance.
 
-## 13. Acceptance update
+## 14. Acceptance update
 
-After an accepted class 2–4 pass:
+After accepted class 2–4 pass:
 
-1. verify the gate and evidence;
+1. verify gate/evidence;
 2. update project runway;
-3. obtain post-pass aggregate usage when available;
-4. update current slice spent/headroom;
-5. add a burn-history sample only with the correct attribution/compatibility label;
-6. keep quality floor unchanged for the next pass.
+3. obtain aggregate usage when available;
+4. update actual spend against the same trajectory anchor;
+5. add burn sample only with correct attribution/compatibility;
+6. preserve quality floor;
+7. re-run balanced admission for the next gate rather than automatically waiting for a daily boundary.

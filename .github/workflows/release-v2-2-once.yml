@@ -1,0 +1,104 @@
+name: One-shot publish v2.2
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  release-v2-2:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require exact one-shot version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          test "$VERSION" = "2.2"
+          test "$GITHUB_REF" = "refs/heads/main"
+
+      - name: Exclude one-shot workflow from portable artifact
+        run: rm -f .github/workflows/release-v2-2-once.yml
+
+      - name: Validate repository
+        run: python3 scripts/validate_repo.py
+
+      - name: Fail closed if v2.2 release or tag exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v2.2 >/dev/null 2>&1; then
+            echo "Release v2.2 already exists."
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin refs/tags/v2.2 >/dev/null 2>&1; then
+            echo "Tag v2.2 already exists."
+            exit 1
+          fi
+
+      - name: Build and round-trip validate release artifact
+        run: python3 scripts/package_release.py
+
+      - name: Checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum openai-work-codex-regulator-v2.2.zip > openai-work-codex-regulator-v2.2.zip.sha256
+
+      - name: Prepare release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "# openai-work-codex-regulator v2.2"
+            echo
+            echo "Balanced weekly quota + workflow pace orchestration release with self-contained downstream execution."
+            echo
+            echo "## Installation"
+            echo
+            echo "Download \`openai-work-codex-regulator-v2.2.zip\`, unpack it into the skills directory, and keep \`openai-work-codex-regulator/SKILL.md\` as the entrypoint."
+            echo
+            echo "## Changes"
+            awk '
+              $0 ~ "^## 2.2 " {capture=1; next}
+              capture && /^## / {exit}
+              capture {print}
+            ' CHANGELOG.md
+          } > /tmp/release-notes.md
+
+      - name: Publish v2.2
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create v2.2 \
+            --target "$GITHUB_SHA" \
+            --title "openai-work-codex-regulator v2.2" \
+            --notes-file /tmp/release-notes.md \
+            "dist/openai-work-codex-regulator-v2.2.zip#Portable skill archive" \
+            "dist/openai-work-codex-regulator-v2.2.zip.sha256#SHA-256 checksum"
+
+      - name: Verify published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ASSETS="$(gh release view v2.2 --json assets --jq '.assets[].name')"
+          grep -Fxq openai-work-codex-regulator-v2.2.zip <<<"$ASSETS"
+          grep -Fxq openai-work-codex-regulator-v2.2.zip.sha256 <<<"$ASSETS"
+          TARGET="$(gh api repos/${GITHUB_REPOSITORY}/git/ref/tags/v2.2 --jq '.object.sha')"
+          test "$TARGET" = "$GITHUB_SHA"
+          echo "Release v2.2 verified at ${GITHUB_SHA}."

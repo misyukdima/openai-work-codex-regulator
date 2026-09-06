@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.2 — 2026-09-06
+
+Balanced quota-and-workflow orchestration release based on real v2.1 field testing.
+
+- Replaced v2.1's fixed 24h control slice as a hard pass-admission boundary with one epoch-anchored absolute cumulative quota trajectory.
+- Preserved 24h as the normal `BASE_LOOKAHEAD_HOURS` pacing target while adding a bounded `MAX_ADVANCE_HOURS=72` future-advance horizon; recomputation remains anchored and cannot reissue a fresh daily budget after each pass.
+- Added equal-priority optimization after hard safety/quality gates: `BALANCED_PRIORITY=QUOTA_50_PACE_50`.
+- Added normalized `PACE_RISK_IF_DEFER` and `QUOTA_RISK_IF_LAUNCH` so a critical-path pass may use bounded future capacity when the quota risk of launching is no greater than the workflow risk of waiting.
+- Added `QUOTA_DECISION=LAUNCH_WITH_ADVANCE`; a nominal 24h target overrun is no longer automatically treated as a reason to wait a full day.
+- Kept hard upper protection: a pass beyond `MAX_ADVANCE_HEADROOM_PP` cannot launch merely because pace risk is high.
+- Added a progress-preserving fallback ladder: before pure defer, attempt useful Chat planning/review/handoff, accepted-evidence reuse, quality-preserving split/batching or an already approved non-shared execution path.
+- Added explicit `MEANINGFUL_PROGRESS_WITHOUT_AGENTIC` so quota conservation does not unnecessarily halt the overall workflow.
+- Split regulator **control plane** from downstream **execution plane** with `CONTROL_PLANE_OWNER`, `HANDOFF_SELF_CONTAINED=YES` and `EXECUTOR_SKILL_REQUIRED=NO`.
+- Fixed Chat→Codex / Chat→Work handoffs so downstream executors are not required to have, locate, load or apply the regulator skill.
+- Removed quota epoch, trajectory headroom, quota/pace risk and other control-plane internals from ordinary Work/Codex executor prompt templates.
+- Added normative `references/11_ORCHESTRATION_AND_HANDOFF.md` for self-contained cross-surface contracts.
+- Updated Codex discipline so already accepted Chat/Work fact packs are reused instead of duplicating policy/research reads.
+- Retained `QUALITY_FLOOR=NON_NEGOTIABLE`, separate 5h circuit breaker, paid-reset authorization gates, robust observed-burn estimator and aggregate shared-pool accounting.
+- Changed pending-meter semantics: `PENDING_BURN=YES` blocks another large future advance but does not block safe non-agentic Chat progress.
+- Reworked `SKILL.md`, routing, runway, recovery, architecture, usage guide and source map around the balanced controller and executor independence.
+- Re-verified first-party OpenAI Work/Codex shared-allowance, usage/reporting, paid-reset, model and safety sources on 2026-09-06.
+- Added regression tests 96–115 for executor independence, control-plane leakage, continuous trajectory, bounded advance, equal-risk decisions, hard quality/5h protection, pending telemetry and productive alternatives.
+- Validator upgraded for v2.2: requires 115 contiguous tests across the base and v2.2 regression files, imports the new controller self-test, validates orchestration invariants, and fails if ordinary executor templates leak quota-control fields or require the regulator skill.
+
 ## 2.1 — 2026-09-05
 
 Adaptive weekly quota-control release focused on keeping shared Work/Codex capacity usable throughout the entire reset window without lowering the minimum sufficient quality of work.

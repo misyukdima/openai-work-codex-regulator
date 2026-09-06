@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""Reference implementation for the v2.1 adaptive weekly Work/Codex quota controller.
+"""Reference implementation for the v2.2 balanced Work/Codex quota + workflow pace controller.
 
-The controller operates only on normalized first-party weekly percentage points.
-It intentionally does not convert token counts or rate-card prices into weekly usage.
+The controller operates only on normalized first-party Work/Codex weekly
+percentage points. It never converts API/token/rate-card units into weekly pp.
+
+v2.2 replaces the v2.1 hard fixed-24h admission cap with an epoch-anchored
+cumulative trajectory. A 24h look-ahead remains the normal spend target, while
+a bounded future advance can be admitted when equal-weight workflow pace risk
+is greater than quota advance risk.
 """
 from __future__ import annotations
 
@@ -16,80 +21,130 @@ from typing import Iterable, Sequence
 BASE_WEEKLY_RESERVE_PP = 10.0
 RESERVE_FRACTION_CAP = 0.50
 RESERVE_RELEASE_HOURS = 72.0
-CONTROL_SLICE_HOURS = 24.0
+BASE_LOOKAHEAD_HOURS = 24.0
+MAX_ADVANCE_HOURS = 72.0
 DEFAULT_METER_GRANULARITY_PP = 1.0
+
+PACE_LEVELS = {
+    "NONE": 0.0,
+    "LOW": 0.25,
+    "MEDIUM": 0.50,
+    "HIGH": 0.75,
+    "CRITICAL": 1.0,
+}
 
 
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
-def reserve_schedule_pp(weekly_remaining_pp: float, hours_to_reset: float) -> float:
-    """Return the reserve still held at the current point in the weekly epoch."""
+def anchor_reserve_pp(weekly_remaining_pp: float, anchor_hours_to_reset: float) -> float:
     remaining = clamp(float(weekly_remaining_pp), 0.0, 100.0)
-    hours = max(0.0, float(hours_to_reset))
-    reserve_cap = min(BASE_WEEKLY_RESERVE_PP, RESERVE_FRACTION_CAP * remaining)
-    release_factor = clamp(hours / RESERVE_RELEASE_HOURS, 0.0, 1.0)
-    return reserve_cap * release_factor
+    hours = max(0.0, float(anchor_hours_to_reset))
+    cap = min(BASE_WEEKLY_RESERVE_PP, RESERVE_FRACTION_CAP * remaining)
+    return cap * clamp(hours / RESERVE_RELEASE_HOURS, 0.0, 1.0)
 
 
 @dataclass(frozen=True)
-class SlicePlan:
-    weekly_used_pp: float
-    weekly_remaining_pp: float
-    hours_to_reset: float
-    slice_hours: float
-    held_reserve_start_pp: float
-    held_reserve_end_pp: float
-    control_slice_budget_pp: float
+class TrajectoryAnchor:
+    anchor_weekly_used_pp: float
+    anchor_weekly_remaining_pp: float
+    anchor_hours_to_reset: float
+    anchor_reserve_pp: float
 
 
-def plan_control_slice(weekly_used_pp: float, hours_to_reset: float) -> SlicePlan:
-    """Plan one fixed rolling control slice from the current anchor."""
-    used = clamp(float(weekly_used_pp), 0.0, 100.0)
-    hours = max(0.0, float(hours_to_reset))
+def make_anchor(anchor_weekly_used_pp: float, anchor_hours_to_reset: float) -> TrajectoryAnchor:
+    used = clamp(float(anchor_weekly_used_pp), 0.0, 100.0)
+    hours = max(0.0, float(anchor_hours_to_reset))
     remaining = max(0.0, 100.0 - used)
-    if hours <= 0.0 or remaining <= 0.0:
-        return SlicePlan(used, remaining, hours, 0.0, 0.0, 0.0, 0.0)
+    reserve = anchor_reserve_pp(remaining, hours)
+    return TrajectoryAnchor(used, remaining, hours, reserve)
 
-    h = min(CONTROL_SLICE_HOURS, hours)
-    z0 = reserve_schedule_pp(remaining, hours)
-    z1 = reserve_schedule_pp(remaining, max(0.0, hours - h))
-    schedulable = max(0.0, remaining - z0)
-    proportional = schedulable * (h / hours)
-    released_reserve = max(0.0, z0 - z1)
-    budget = min(remaining, max(0.0, proportional + released_reserve))
-    return SlicePlan(used, remaining, hours, h, z0, z1, budget)
+
+def target_cumulative_spend_pp(
+    anchor_weekly_used_pp: float,
+    anchor_hours_to_reset: float,
+    hours_to_reset_now: float,
+) -> float:
+    """Cumulative pp the anchored trajectory permits spending by the current point."""
+    a = make_anchor(anchor_weekly_used_pp, anchor_hours_to_reset)
+    if a.anchor_hours_to_reset <= 0.0:
+        return a.anchor_weekly_remaining_pp
+
+    h = clamp(float(hours_to_reset_now), 0.0, a.anchor_hours_to_reset)
+    schedulable0 = max(0.0, a.anchor_weekly_remaining_pp - a.anchor_reserve_pp)
+    scheduled_remaining = schedulable0 * (h / a.anchor_hours_to_reset)
+
+    release_denominator = min(RESERVE_RELEASE_HOURS, a.anchor_hours_to_reset)
+    reserve_remaining = (
+        0.0
+        if release_denominator <= 0.0
+        else a.anchor_reserve_pp * clamp(h / release_denominator, 0.0, 1.0)
+    )
+
+    target = a.anchor_weekly_remaining_pp - scheduled_remaining - reserve_remaining
+    return clamp(target, 0.0, a.anchor_weekly_remaining_pp)
 
 
 @dataclass(frozen=True)
-class SliceStatus:
-    slice_start_used_pp: float
-    current_used_pp: float
-    slice_budget_pp: float
-    slice_spent_pp: float
-    slice_headroom_pp: float
+class TrajectoryStatus:
+    anchor_weekly_used_pp: float
+    current_weekly_used_pp: float
+    anchor_hours_to_reset: float
+    hours_to_reset_now: float
+    actual_spend_since_anchor_pp: float
+    target_spend_now_pp: float
+    target_spend_base_horizon_pp: float
+    target_spend_max_advance_horizon_pp: float
     meter_granularity_pp: float
-    effective_slice_headroom_pp: float
-    overrun_pp: float
+    scheduled_commitment_pp: float
+    base_action_headroom_pp: float
+    max_advance_headroom_pp: float
+    borrowable_extra_pp: float
 
 
-def control_slice_status(
-    slice_start_used_pp: float,
-    current_used_pp: float,
-    slice_budget_pp: float,
+def trajectory_status(
+    anchor_weekly_used_pp: float,
+    anchor_hours_to_reset: float,
+    hours_to_reset_now: float,
+    current_weekly_used_pp: float,
     meter_granularity_pp: float | None = None,
-) -> SliceStatus:
-    """Measure remaining headroom inside an already-anchored control slice."""
-    start = clamp(float(slice_start_used_pp), 0.0, 100.0)
-    current = clamp(float(current_used_pp), 0.0, 100.0)
-    budget = max(0.0, float(slice_budget_pp))
+    scheduled_commitment_pp: float = 0.0,
+) -> TrajectoryStatus:
+    """Return continuous trajectory headroom without resetting the anchor."""
+    a = make_anchor(anchor_weekly_used_pp, anchor_hours_to_reset)
+    current = clamp(float(current_weekly_used_pp), 0.0, 100.0)
+    h_now = clamp(float(hours_to_reset_now), 0.0, a.anchor_hours_to_reset)
     g = DEFAULT_METER_GRANULARITY_PP if meter_granularity_pp is None else max(0.0, float(meter_granularity_pp))
-    spent = max(0.0, current - start)
-    headroom = max(0.0, budget - spent)
-    effective = max(0.0, headroom - g)
-    overrun = max(0.0, spent - budget)
-    return SliceStatus(start, current, budget, spent, headroom, g, effective, overrun)
+    scheduled = max(0.0, float(scheduled_commitment_pp))
+
+    actual = max(0.0, current - a.anchor_weekly_used_pp)
+    base_future_h = max(0.0, h_now - min(BASE_LOOKAHEAD_HOURS, h_now))
+    advance_future_h = max(0.0, h_now - min(MAX_ADVANCE_HOURS, h_now))
+
+    target_now = target_cumulative_spend_pp(a.anchor_weekly_used_pp, a.anchor_hours_to_reset, h_now)
+    target_base = target_cumulative_spend_pp(a.anchor_weekly_used_pp, a.anchor_hours_to_reset, base_future_h)
+    target_advance = target_cumulative_spend_pp(a.anchor_weekly_used_pp, a.anchor_hours_to_reset, advance_future_h)
+
+    base = max(0.0, target_base - actual - scheduled - g)
+    advance = max(0.0, target_advance - actual - scheduled - g)
+    extra = max(0.0, advance - base)
+
+    return TrajectoryStatus(
+        a.anchor_weekly_used_pp,
+        current,
+        a.anchor_hours_to_reset,
+        h_now,
+        actual,
+        target_now,
+        target_base,
+        target_advance,
+        g,
+        scheduled,
+        base,
+        advance,
+        extra,
+    )
 
 
 def _quantile_linear(values: Sequence[float], q: float) -> float:
@@ -121,10 +176,6 @@ def robust_safe_burn_pp(
     samples_pp: Iterable[float],
     meter_granularity_pp: float | None = None,
 ) -> BurnEstimate:
-    """Conservative planning estimate from up to five recent compatible samples.
-
-    This is a regulator heuristic, not a statistical guarantee.
-    """
     samples = tuple(max(0.0, float(x)) for x in samples_pp)[-5:]
     g = DEFAULT_METER_GRANULARITY_PP if meter_granularity_pp is None else max(0.0, float(meter_granularity_pp))
     n = len(samples)
@@ -132,12 +183,10 @@ def robust_safe_burn_pp(
         return BurnEstimate(None, "UNKNOWN", "no-compatible-history", 0, samples)
     if n == 1:
         x = samples[0]
-        safe = x + max(g, 0.50 * x)
-        return BurnEstimate(safe, "LOW", "single-sample-50pct-bootstrap", 1, samples)
+        return BurnEstimate(x + max(g, 0.50 * x), "LOW", "single-sample-50pct-bootstrap", 1, samples)
     if n == 2:
         m = max(samples)
-        safe = m + max(g, 0.25 * m)
-        return BurnEstimate(safe, "LOW", "two-sample-max-25pct-bootstrap", 2, samples)
+        return BurnEstimate(m + max(g, 0.25 * m), "LOW", "two-sample-max-25pct-bootstrap", 2, samples)
 
     med = statistics.median(samples)
     mad = statistics.median(abs(x - med) for x in samples)
@@ -148,94 +197,102 @@ def robust_safe_burn_pp(
     return BurnEstimate(safe, confidence, "median-mad-p80-one-sided-margin", n, samples)
 
 
+def pace_risk(level_or_value: str | float) -> float:
+    if isinstance(level_or_value, str):
+        key = level_or_value.strip().upper()
+        if key in PACE_LEVELS:
+            return PACE_LEVELS[key]
+        return clamp(float(level_or_value), 0.0, 1.0)
+    return clamp(float(level_or_value), 0.0, 1.0)
+
+
 @dataclass(frozen=True)
-class AdmissionDecision:
+class BalancedAdmission:
     decision: str
     quality_floor: str
-    continuity_feasible: str
-    effective_headroom_pp: float
-    estimated_safe_burn_pp: float | None
+    balanced_priority: str
+    base_headroom_pp: float
+    max_advance_headroom_pp: float
+    safe_burn_pp: float | None
+    needed_advance_pp: float
+    quota_risk_if_launch: float
+    pace_risk_if_defer: float
     reason: str
 
 
-def admission_decision(
-    effective_slice_headroom_pp: float,
+def balanced_admission(
+    status: TrajectoryStatus,
     burn_estimate: BurnEstimate,
+    pace_risk_if_defer: str | float,
     quality_sufficient: bool = True,
-) -> AdmissionDecision:
-    headroom = max(0.0, float(effective_slice_headroom_pp))
+) -> BalancedAdmission:
+    """Equal-priority admission between quota continuity and workflow pace."""
+    p_risk = pace_risk(pace_risk_if_defer)
+    base = max(0.0, status.base_action_headroom_pp)
+    advance = max(base, status.max_advance_headroom_pp)
+
     if not quality_sufficient:
-        return AdmissionDecision(
-            "DEFER_FOR_QUALITY",
-            "NON_NEGOTIABLE",
-            "NO",
-            headroom,
-            burn_estimate.safe_burn_pp,
+        return BalancedAdmission(
+            "DEFER_FOR_QUALITY", "NON_NEGOTIABLE", "QUOTA_50_PACE_50",
+            base, advance, burn_estimate.safe_burn_pp, 0.0, 0.0, p_risk,
             "candidate pass is below the minimum sufficient quality floor",
         )
-    if burn_estimate.safe_burn_pp is None:
-        return AdmissionDecision(
-            "CALIBRATE_OR_PREPARE",
-            "NON_NEGOTIABLE",
-            "UNKNOWN",
-            headroom,
-            None,
+
+    safe = burn_estimate.safe_burn_pp
+    if safe is None:
+        return BalancedAdmission(
+            "CALIBRATE_OR_PREPARE", "NON_NEGOTIABLE", "QUOTA_50_PACE_50",
+            base, advance, None, 0.0, 0.0, p_risk,
             "no compatible observed burn history",
         )
-    safe = burn_estimate.safe_burn_pp
-    if safe <= headroom:
-        return AdmissionDecision(
-            "LAUNCH",
-            "NON_NEGOTIABLE",
-            "YES",
-            headroom,
-            safe,
-            "quality-sufficient conservative burn fits the current fixed control slice",
+
+    if safe <= base:
+        return BalancedAdmission(
+            "LAUNCH_BASE", "NON_NEGOTIABLE", "QUOTA_50_PACE_50",
+            base, advance, safe, 0.0, 0.0, p_risk,
+            "quality-sufficient burn fits the normal 24h trajectory look-ahead",
         )
-    return AdmissionDecision(
-        "DEFER_FOR_QUALITY",
-        "NON_NEGOTIABLE",
-        "NO",
-        headroom,
-        safe,
-        "quality-sufficient conservative burn does not fit the current fixed control slice",
+
+    needed = max(0.0, safe - base)
+    extra = max(0.0, advance - base)
+    if extra <= 0.0 or safe > advance + 1e-12:
+        return BalancedAdmission(
+            "PROGRESS_ALTERNATIVE_OR_DEFER", "NON_NEGOTIABLE", "QUOTA_50_PACE_50",
+            base, advance, safe, needed, 1.0, p_risk,
+            "pass exceeds the bounded future-advance horizon",
+        )
+
+    q_risk = clamp(needed / extra, 0.0, 1.0)
+    if q_risk <= p_risk + 1e-12:
+        return BalancedAdmission(
+            "LAUNCH_WITH_ADVANCE", "NON_NEGOTIABLE", "QUOTA_50_PACE_50",
+            base, advance, safe, needed, q_risk, p_risk,
+            "quota advance risk is no greater than the equal-weight pace risk of deferral",
+        )
+
+    return BalancedAdmission(
+        "PROGRESS_ALTERNATIVE_OR_DEFER", "NON_NEGOTIABLE", "QUOTA_50_PACE_50",
+        base, advance, safe, needed, q_risk, p_risk,
+        "equal-weight quota risk of launch exceeds pace risk of deferral",
     )
 
 
 def self_test() -> None:
-    # Fresh seven-day window: hold 10pp early reserve and schedule 90pp across 168h.
-    first = plan_control_slice(0.0, 168.0)
-    assert math.isclose(first.control_slice_budget_pp, 90.0 * 24.0 / 168.0, rel_tol=0, abs_tol=1e-9)
-    assert math.isclose(first.control_slice_budget_pp, 12.857142857142858, rel_tol=0, abs_tol=1e-9)
+    s0 = trajectory_status(0.0, 168.0, 168.0, 0.0, 0.0)
+    assert math.isclose(s0.base_action_headroom_pp, 90.0 * 24.0 / 168.0, abs_tol=1e-9)
+    assert math.isclose(s0.base_action_headroom_pp, 12.857142857142858, abs_tol=1e-9)
+    assert math.isclose(s0.max_advance_headroom_pp, 38.57142857142858, abs_tol=1e-9)
 
-    # Spending exactly each planned slice must release the reserve and reach 100 by reset.
-    used = 0.0
-    hours = 168.0
-    slices = 0
-    while hours > 1e-9:
-        p = plan_control_slice(used, hours)
-        used = min(100.0, used + p.control_slice_budget_pp)
-        hours = max(0.0, hours - p.slice_hours)
-        slices += 1
-        assert slices <= 7
-    assert slices == 7
-    assert math.isclose(used, 100.0, rel_tol=0, abs_tol=1e-7)
+    s1 = trajectory_status(0.0, 168.0, 168.0, 5.0, 0.0)
+    assert math.isclose(s1.base_action_headroom_pp, s0.base_action_headroom_pp - 5.0, abs_tol=1e-9)
 
-    # Feedback: under-spend expands the next envelope, over-spend compresses it.
-    exact_first = first.control_slice_budget_pp
-    exact_next = plan_control_slice(exact_first, 144.0).control_slice_budget_pp
-    under_next = plan_control_slice(exact_first - 4.0, 144.0).control_slice_budget_pp
-    over_next = plan_control_slice(exact_first + 4.0, 144.0).control_slice_budget_pp
-    assert under_next > exact_next > over_next
+    s2 = trajectory_status(0.0, 168.0, 167.0, 5.0, 0.0)
+    assert s2.base_action_headroom_pp > s1.base_action_headroom_pp
 
-    # Reserve never consumes more than half a low remaining allowance.
-    assert reserve_schedule_pp(12.0, 120.0) <= 6.0 + 1e-12
+    ss = trajectory_status(0.0, 168.0, 168.0, 0.0, 0.0, scheduled_commitment_pp=3.0)
+    assert math.isclose(ss.base_action_headroom_pp, s0.base_action_headroom_pp - 3.0, abs_tol=1e-9)
+    assert math.isclose(ss.max_advance_headroom_pp, s0.max_advance_headroom_pp - 3.0, abs_tol=1e-9)
 
-    # Stateful slice ledger: 5pp spent from a 12.857pp slice leaves 7.857pp before granularity.
-    status = control_slice_status(0.0, 5.0, first.control_slice_budget_pp, 0.0)
-    assert math.isclose(status.slice_headroom_pp, first.control_slice_budget_pp - 5.0, abs_tol=1e-9)
-
-    # Conservative sparse and robust estimates.
     e1 = robust_safe_burn_pp([4.0], 1.0)
     assert math.isclose(e1.safe_burn_pp or 0.0, 6.0, abs_tol=1e-9)
     e2 = robust_safe_burn_pp([3.0, 4.0], 1.0)
@@ -244,24 +301,41 @@ def self_test() -> None:
     assert e5.safe_burn_pp is not None and e5.safe_burn_pp >= 6.0
     assert e5.confidence == "HIGH"
 
-    # Quality floor is stronger than quota pressure.
-    launch = admission_decision(8.0, robust_safe_burn_pp([3.0, 4.0], 1.0), True)
-    assert launch.decision == "LAUNCH"
-    defer = admission_decision(4.0, robust_safe_burn_pp([5.0, 5.0], 1.0), True)
-    assert defer.decision == "DEFER_FOR_QUALITY"
-    weak = admission_decision(20.0, robust_safe_burn_pp([2.0, 2.0], 1.0), False)
+    e20 = BurnEstimate(20.0, "MEDIUM", "self-test", 3, (18.0, 19.0, 20.0))
+    high = balanced_admission(s0, e20, "HIGH", True)
+    assert high.decision == "LAUNCH_WITH_ADVANCE"
+    assert high.quota_risk_if_launch < high.pace_risk_if_defer
+
+    low = balanced_admission(s0, e20, "LOW", True)
+    assert low.decision == "PROGRESS_ALTERNATIVE_OR_DEFER"
+    assert low.quota_risk_if_launch > low.pace_risk_if_defer
+
+    tie_safe = s0.base_action_headroom_pp + 0.5 * s0.borrowable_extra_pp
+    tie = balanced_admission(
+        s0, BurnEstimate(tie_safe, "MEDIUM", "self-test", 3, (tie_safe,) * 3), 0.50, True
+    )
+    assert tie.decision == "LAUNCH_WITH_ADVANCE"
+    assert math.isclose(tie.quota_risk_if_launch, 0.5, abs_tol=1e-9)
+
+    too_big = BurnEstimate(s0.max_advance_headroom_pp + 1.0, "MEDIUM", "self-test", 3, (40.0,) * 3)
+    denied = balanced_admission(s0, too_big, "CRITICAL", True)
+    assert denied.decision == "PROGRESS_ALTERNATIVE_OR_DEFER"
+
+    weak = balanced_admission(s0, e20, "CRITICAL", False)
     assert weak.decision == "DEFER_FOR_QUALITY"
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="v2.1 adaptive weekly Work/Codex quota controller")
-    p.add_argument("--weekly-used", type=float, required=True, help="normalized first-party weekly used percentage")
-    p.add_argument("--hours-to-reset", type=float, required=True, help="hours until the current weekly reset")
-    p.add_argument("--slice-start-used", type=float, help="weekly used percentage at the current fixed slice anchor")
-    p.add_argument("--current-used", type=float, help="current weekly used percentage")
-    p.add_argument("--meter-granularity", type=float, default=None, help="known meter granularity in percentage points")
-    p.add_argument("--samples", type=str, default="", help="comma-separated compatible pass burn samples in weekly pp")
-    p.add_argument("--self-test", action="store_true", help="run deterministic controller checks before printing result")
+    p = argparse.ArgumentParser(description="v2.2 balanced weekly Work/Codex quota + workflow pace controller")
+    p.add_argument("--anchor-weekly-used", type=float, required=True)
+    p.add_argument("--anchor-hours-to-reset", type=float, required=True)
+    p.add_argument("--hours-to-reset-now", type=float, required=True)
+    p.add_argument("--current-weekly-used", type=float, required=True)
+    p.add_argument("--meter-granularity", type=float, default=None)
+    p.add_argument("--scheduled-commitment", type=float, default=0.0)
+    p.add_argument("--samples", type=str, default="")
+    p.add_argument("--pace-risk", type=str, default="MEDIUM", help="NONE|LOW|MEDIUM|HIGH|CRITICAL or 0..1")
+    p.add_argument("--self-test", action="store_true")
     return p
 
 
@@ -270,31 +344,21 @@ def main() -> None:
     if args.self_test:
         self_test()
 
-    plan = plan_control_slice(args.weekly_used, args.hours_to_reset)
-    payload: dict[str, object] = {"plan": asdict(plan)}
-
-    if args.slice_start_used is not None or args.current_used is not None:
-        if args.slice_start_used is None or args.current_used is None:
-            raise SystemExit("--slice-start-used and --current-used must be supplied together")
-        payload["slice_status"] = asdict(
-            control_slice_status(
-                args.slice_start_used,
-                args.current_used,
-                plan.control_slice_budget_pp,
-                args.meter_granularity,
-            )
-        )
+    status = trajectory_status(
+        args.anchor_weekly_used,
+        args.anchor_hours_to_reset,
+        args.hours_to_reset_now,
+        args.current_weekly_used,
+        args.meter_granularity,
+        args.scheduled_commitment,
+    )
+    payload: dict[str, object] = {"trajectory": asdict(status)}
 
     samples = [float(x.strip()) for x in args.samples.split(",") if x.strip()]
     if samples:
         estimate = robust_safe_burn_pp(samples, args.meter_granularity)
         payload["burn_estimate"] = asdict(estimate)
-        effective = (
-            payload.get("slice_status", {}).get("effective_slice_headroom_pp", plan.control_slice_budget_pp)
-            if isinstance(payload.get("slice_status"), dict)
-            else plan.control_slice_budget_pp
-        )
-        payload["admission"] = asdict(admission_decision(float(effective), estimate, True))
+        payload["admission"] = asdict(balanced_admission(status, estimate, args.pace_risk, True))
 
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 

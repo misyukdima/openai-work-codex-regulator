@@ -1,260 +1,200 @@
-# Использование openai-work-codex-regulator v2.1
+# Использование openai-work-codex-regulator v2.2
 
 ## 1. Базовый вызов
 
 ```text
 Используй openai-work-codex-regulator.
-Нужно сохранить Work/Codex capacity на весь текущий weekly reset window, не снижая качество.
-Определи surface/model, построи или обнови adaptive weekly control slice и подготовь один bounded pass.
-
+Сохраняй недельную Work/Codex квоту, но не останавливай critical path только из-за nominal 24h target.
+Квота и темп работы имеют равный приоритет после hard safety/quality gates.
 Задача: <описание>
 ```
 
-## 2. Что дать регулятору
-
-Для полноценного weekly control достаточно актуального first-party snapshot:
+## 2. Минимальный quota snapshot
 
 ```text
-Weekly used: <percent>
-Weekly reset: <timestamp / duration>
+Weekly used/remaining: <percent>
+Weekly reset: <timestamp/duration>
 5h used/reset: <если показано>
-Usage meter semantics: USED / REMAINING
-Meter granularity: <если видно>
+Meter semantics: USED / REMAINING
+Meter granularity: <если известно>
 ```
 
-Если UI показывает remaining, регулятор явно преобразует его к used.
+Token/rate-card conversion не нужен.
 
-Не нужны token-count estimates или rate-card conversions.
+## 3. Что изменилось с v2.1
 
-## 3. Fresh-week example
+v2.1 фиксировал 24h slice и мог выдать `DEFER_FOR_QUALITY`, если хороший pass был чуть дороже текущего slice.
 
-Пусть:
+v2.2 использует absolute trajectory:
 
 ```text
-Weekly used = 0%
-Reset = 168h
+one epoch anchor
+→ 24h normal look-ahead
+→ bounded 72h future advance
+→ quota risk vs pace risk
 ```
 
-v2.1 держит early reserve 10pp и планирует первый 24h slice:
+Поэтому 24h больше не является обязательным ожиданием.
+
+## 4. Fresh-week reference
+
+Для `U0=0`, `H0=168h`, zero reservations/buffer:
 
 ```text
-(100 - 10) * 24 / 168
-= 12.857142857 pp
+BASE_ACTION_HEADROOM_PP ≈ 12.8571
+MAX_ADVANCE_HEADROOM_PP ≈ 38.5714
 ```
 
-Это не permanent daily limit. Через 24h controller смотрит фактический meter и строит следующий slice.
+Первое — нормальный 24h target. Второе — абсолютный максимум bounded advance horizon, а не новый daily budget.
 
-## 4. Stateful slice
+## 5. Equal-priority admission
 
-После создания slice сохраняются:
+Определить:
 
 ```text
-QUOTA_EPOCH_ID=...
-CONTROL_SLICE_ID=...
-CONTROL_SLICE_START_WEEKLY_USED_PP=...
-CONTROL_SLICE_BUDGET_PP=...
+PACE_RISK_IF_DEFER = NONE|LOW|MEDIUM|HIGH|CRITICAL
 ```
 
-Если бюджет 12.86pp и за первый pass meter вырос на 5pp, remaining slice headroom примерно:
+Соответствия:
 
 ```text
-12.86 - 5 = 7.86 pp
+NONE=0.00
+LOW=0.25
+MEDIUM=0.50
+HIGH=0.75
+CRITICAL=1.00
 ```
 
-до meter-granularity buffer.
+Если pass помещается в normal 24h headroom → `LAUNCH_BASE`.
 
-Не пересчитывать новый полный дневной бюджет сразу после pass.
-
-## 5. После каждого meaningful pass
-
-Получить свежий aggregate snapshot и обновить:
+Если требует future advance:
 
 ```text
-WEEKLY_USED_NOW=
-SLICE_SPENT_PP=
-EFFECTIVE_SLICE_HEADROOM_PP=
-POST_PASS_METER_STATE=UPDATED|PENDING|UNKNOWN
-PENDING_BURN=YES|NO
+QUOTA_RISK_IF_LAUNCH =
+  needed_advance / borrowable_extra
 ```
 
-Если meter ещё plausibly не отразил run, большой следующий pass не стартует.
-
-## 6. Burn history
-
-Для похожих passes сохранять до пяти наблюдений:
+При:
 
 ```text
-surface
-role/class
-model profile/tier
-reasoning/speed posture
-task shape
-weekly pp delta
-attribution label
+QUOTA_RISK_IF_LAUNCH <= PACE_RISK_IF_DEFER
 ```
 
-Пример:
+и pass внутри max-advance horizon → `LAUNCH_WITH_ADVANCE`.
+
+## 6. Pace-risk examples
+
+- LOW — есть полезная независимая работа; сутки почти ничего не ломают.
+- MEDIUM — задержка создаёт rework/throughput penalty, но critical path не закрыт.
+- HIGH — gate блокирует дальнейшую реализацию или создаёт заметный idle window.
+- CRITICAL — incident/deadline/revenue/production/reputation window под риском.
+
+## 7. Если launch не проходит
+
+Не переходить сразу к ожиданию:
+
+1. убрать duplicate work/context;
+2. reuse accepted facts;
+3. quality-preserving split/batch;
+4. продолжить Chat planning/review/handoff;
+5. использовать уже разрешённый non-shared external tool;
+6. только затем defer.
 
 ```text
-Samples: 3, 4, 4, 5, 6 pp
-Meter granularity: 1 pp
+MEANINGFUL_PROGRESS_WITHOUT_AGENTIC=YES|NO|UNKNOWN
 ```
 
-Регулятор построит conservative `B_SAFE` по median/MAD/P80 rule.
+## 8. Chat → Codex handoff
 
-Это planning estimate, не гарантия точного расхода.
-
-## 7. Если истории нет
-
-Для class 2 при достаточном headroom выбрать smallest useful quality-sufficient calibration gate, затем измерить aggregate burn.
-
-Для class 3–4/Astra + tight headroom:
+Если regulator работает в Chat:
 
 ```text
-ПОДГОТОВКА / ПЕРЕНОС
+CONTROL_PLANE_OWNER=CHAT
+HANDOFF_SELF_CONTAINED=YES
+EXECUTOR_SKILL_REQUIRED=NO
 ```
 
-не запуск вслепую.
+Chat сам решает quota/model/admission. Codex получает готовый execution packet и не должен искать/загружать regulator.
 
-## 8. Quality floor
-
-Всегда:
+Не включать в обычный Codex prompt:
 
 ```text
-QUALITY_FLOOR=NON_NEGOTIABLE
+QUOTA_EPOCH_ID
+trajectory headroom
+quota/pace risk
+paid-reset state
 ```
 
-Если desired pass слишком дорог для текущего slice, сначала:
+Передавать только goal/fact pack/scope/tests/rollback/stop conditions.
 
-- reuse compact handoff;
-- убрать duplicate research/audits;
-- сократить лишний context/output;
-- batch dependent steps внутри same gate;
-- использовать cheaper tier/effort только если он всё ещё достаточен;
-- перенести lower-value work.
-
-Не убирать required tests/sources и не выбирать insufficient model.
-
-Если high-quality pass всё равно не помещается:
+## 9. Codex packet example
 
 ```text
-QUOTA_DECISION=DEFER_FOR_QUALITY
+PASS_ID: <id>
+SURFACE: CODEX
+ROLE: IMPL
+GATE: <one gate>
+MODE: BOUNDED_MUTATION
+STOP AFTER REPORT.
+
+GOAL:
+<goal>
+
+ROOT / REPO / ENVIRONMENT:
+<state>
+
+CONTEXT / FACT PACK:
+<accepted facts>
+
+READ SCOPE:
+<paths>
+
+WRITE SCOPE:
+<paths/actions>
+
+NO-TOUCH:
+<paths/services/secrets>
+
+ORDER:
+1. baseline
+2. minimal sufficient change
+3. tests
+4. diff
+5. report
+
+TESTS:
+<commands>
+
+ROLLBACK:
+<point>
+
+STOP IF:
+<drift/scope expansion/safety issue>
 ```
 
-## 9. Under-spend / over-spend
+## 10. Direct Codex use
 
-### Under-spend
+Если skill установлен и прямо вызван внутри Codex, Codex может быть собственным `CONTROL_PLANE_OWNER`. Но последующие cross-surface handoffs всё равно self-contained.
 
-Потратили меньше текущего slice → следующий 24h envelope станет больше, потому что больше quota останется на меньшее число часов.
+## 11. Pending meter
 
-### Over-spend
+`PENDING_BURN=YES` блокирует новый большой future advance до plausibly updated aggregate telemetry. Это не блокирует полезную Chat preparation/review.
 
-Потратили больше → следующий envelope уменьшается, а текущий controller может перейти:
+## 12. Quality and 5h
 
-```text
-WEEKLY_QUOTA_MODE=RECOVERY
-```
+`QUALITY_FLOOR=NON_NEGOTIABLE` и отдельный 5h circuit breaker стоят выше quota/pace balancing. Высокая срочность не разрешает insufficient model, missing tests или обход локального limit.
 
-Не выдавать себе новый полный дневной budget для компенсации.
-
-## 10. Weekly reset
-
-При подтверждённом reset:
-
-```text
-QUOTA_EPOCH_EVENT=RESET
-```
-
-Дальше:
-
-1. получить fresh first-party meter/reset;
-2. создать новый `QUOTA_EPOCH_ID`;
-3. discard old control slice;
-4. revalidate burn-history compatibility;
-5. сохранить project gates/evidence.
-
-## 11. Paid instant reset
-
-Default:
-
-```text
-PAID_WEEKLY_RESET_ALLOWED=NO
-```
-
-Если пользователь отдельно разрешает покупку, это отдельное class-4 money action.
-
-После реально применённого reset controller строится заново; old schedule не переносится.
-
-## 12. 5-hour window
-
-5h и weekly percentages нельзя сравнивать напрямую.
-
-Если UI показывает 5h meter, controller проверяет две независимые constraints:
-
-```text
-weekly B_SAFE <= weekly headroom
-AND
-5h B_SAFE <= 5h headroom
-```
-
-Heavy pass может быть weekly-affordable, но всё равно не помещаться в текущий 5h window.
-
-## 13. Scheduled Tasks
-
-Recurring work резервирует capacity:
-
-```text
-SCHEDULED_WEEKLY_COMMITMENT_PP=
-EXPECTED_SCHEDULED_BURN_BEFORE_SLICE_END_PP=
-```
-
-Interactive headroom уменьшается заранее, чтобы один и тот же allowance не был обещан двум задачам.
-
-## 14. Astra
-
-Astra остаётся exceptional profile.
-
-Quota pressure не означает автоматический downgrade. Если Astra объективно minimum sufficient, а current slice не вмещает pass, нужно quality-preserving scope reduction или defer.
-
-## 15. Reference calculator
-
-Fresh week:
+## 13. Reference calculator
 
 ```bash
 python3 scripts/weekly_quota_controller.py \
-  --weekly-used 0 \
-  --hours-to-reset 168 \
+  --anchor-weekly-used 0 \
+  --anchor-hours-to-reset 168 \
+  --hours-to-reset-now 168 \
+  --current-weekly-used 0 \
+  --samples 18,19,20 \
+  --pace-risk HIGH \
   --self-test
 ```
 
-Existing slice plus burn history:
-
-```bash
-python3 scripts/weekly_quota_controller.py \
-  --weekly-used 37 \
-  --hours-to-reset 96 \
-  --slice-start-used 34 \
-  --current-used 37 \
-  --meter-granularity 1 \
-  --samples 3,4,4,5,6
-```
-
-## 16. Decision card fields
-
-Для cost-sensitive Work/Codex pass полезно видеть:
-
-```text
-Quota epoch
-Weekly used/reset
-Control slice budget
-Slice spent
-Effective slice headroom
-Pending burn
-5h status
-B_SAFE + confidence
-Continuity feasible
-Quality floor
-Model profile/tier/effort
-```
-
-Главная цель — не «использовать одинаковый процент каждый день», а поддерживать максимально полезную и качественную работу в течение всего weekly window через feedback и re-planning.
+Главная цель v2.2 — максимизировать устойчивый полезный прогресс в пределах недельной shared allowance, не отдавая автоматический приоритет ни экономии квоты, ни скорости процесса.
