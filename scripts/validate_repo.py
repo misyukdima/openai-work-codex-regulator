@@ -20,7 +20,9 @@ REQUIRED = [
     "references/13_COMPANION_AND_CHAT_BRIDGE.md", "references/SOURCE_MAP.md",
     "tests/TEST_CASES.md", "tests/TEST_CASES_V2_2.md", "tests/TEST_CASES_V3_0.md",
     "scripts/weekly_quota_controller.py", "scripts/quota_telemetry.py",
-    "companion/quota_companion.py", "relay/quota_relay.py", "relay/get_quota_snapshot.tool.json",
+    "companion/quota_companion.py", "companion/macos/Package.swift",
+    "companion/macos/Sources/RegulatorCompanion/main.swift",
+    "relay/quota_relay.py", "relay/get_quota_snapshot.tool.json",
     ".github/CODEOWNERS", ".github/PULL_REQUEST_TEMPLATE.md", ".github/ISSUE_TEMPLATE/bug.md",
     ".github/ISSUE_TEMPLATE/rule-change.md", ".github/workflows/validate.yml", ".github/workflows/release.yml",
 ]
@@ -154,6 +156,15 @@ BRIDGE_INVARIANTS = [
     "get_quota_snapshot()",
 ]
 
+NATIVE_COMPANION_INVARIANTS = [
+    "KeychainStore",
+    "Подключить ChatGPT",
+    'Bundle.main.url(forAuxiliaryExecutable: "CodexBarCLI")',
+    '"--source", "oauth"',
+    "NSWorkspace.shared.open(pairing.connectURL)",
+    "Timer.scheduledTimer(withTimeInterval: 300",
+]
+
 REQUIRED_SOURCES = [
     "https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex",
     "https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan",
@@ -175,7 +186,7 @@ REQUIRED_SOURCES = [
     "https://developers.openai.com/api/docs/guides/latest-model",
 ]
 
-MIN_TESTS = 150
+MIN_TESTS = 160
 GENERATION_NEUTRAL_FILES = [
     "SKILL.md", "references/01_SURFACE_ROUTING.md", "references/03_TASK_CLASSIFICATION.md",
     "references/04_RUNWAY_AND_BURN.md", "references/05_WORK_BROWSER_AND_ACTIONS.md",
@@ -260,6 +271,9 @@ for needle in TELEMETRY_INVARIANTS:
 for needle in BRIDGE_INVARIANTS:
     if needle not in read("references/13_COMPANION_AND_CHAT_BRIDGE.md"):
         errors.append(f"companion/chat bridge reference missing required rule: {needle}")
+for needle in NATIVE_COMPANION_INVARIANTS:
+    if needle not in read("companion/macos/Sources/RegulatorCompanion/main.swift"):
+        errors.append(f"native Companion missing required implementation marker: {needle}")
 
 source_map = read("references/SOURCE_MAP.md")
 if not re.search(r"\*\*Verified:\*\*\s*\d{4}-\d{2}-\d{2}", source_map):
@@ -366,7 +380,7 @@ run_module_self_test(
 )
 
 scan_targets = set()
-for glob in ("*.md", "*.py", "*.yml", "*.yaml", "*.toml", "*.txt", "*.json"):
+for glob in ("*.md", "*.py", "*.swift", "*.sh", "*.yml", "*.yaml", "*.toml", "*.txt", "*.json", "*.plist"):
     scan_targets.update(ROOT.rglob(glob))
 for path in sorted(scan_targets):
     if not path.is_file():
@@ -391,5 +405,5 @@ if errors:
 
 print(
     f"Repository validation OK — openai-work-codex-regulator v{version} "
-    f"({len(numbers)} tests, autonomous telemetry + companion/relay + balanced controller present)"
+    f"({len(numbers)} tests, autonomous telemetry + native Companion + relay + balanced controller present)"
 )
