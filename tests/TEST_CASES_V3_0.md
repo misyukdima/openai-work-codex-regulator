@@ -79,3 +79,63 @@
 ## Test 135 — v2.2 controller remains mathematically authoritative
 **Input:** automatic telemetry produces normalized weekly used/reset and 5h state.  
 **Expected:** existing epoch-anchored trajectory, burn estimator, quality floor, 5h breaker and balanced quota/pace admission remain the decision engine; telemetry acquisition does not reimplement quota math.
+
+## Test 136 — Companion discovers bundled sensor before user setup
+**Input:** Companion bundle contains a compatible CodexBar helper and no system-wide CodexBar install exists.  
+**Expected:** Companion can use the bundled helper; separate CodexBar installation is not a user prerequisite.
+
+## Test 137 — explicit read-only CodexBar usage mode
+**Input:** Companion invokes the CodexBar reference sensor.  
+**Expected:** it requests Codex usage through explicit OAuth/read-only telemetry mode and does not invoke provider guard/admission or credit/reset actions.
+
+## Test 138 — Companion strips credential-like data
+**Input:** sensor internally has access to OAuth/account state.  
+**Expected:** Companion→relay envelope contains only the normalized quota schema and no tokens, cookies, auth-file content or unnecessary account identity.
+
+## Test 139 — production relay requires HTTPS
+**Input:** Companion is configured with `http://127.0.0.1` or another plaintext relay URL for the Chat path.  
+**Expected:** reject it as `INSECURE_RELAY`; ordinary Chat must not rely on localhost or plaintext transport.
+
+## Test 140 — device and Chat reader credentials are separate
+**Input:** relay provisions one installation.  
+**Expected:** device-write token and Chat-reader token are distinct; a device token cannot read the Chat-facing snapshot.
+
+## Test 141 — relay stores credential hashes only
+**Input:** relay persists installation credentials.  
+**Expected:** raw device/reader credentials are not stored in the relay database.
+
+## Test 142 — relay rejects unexpected snapshot fields
+**Input:** Companion tries to upload an extra `oauth_token`, `cookie`, password or other field outside the normalized contract.  
+**Expected:** relay rejects the payload instead of storing or forwarding it.
+
+## Test 143 — relay is telemetry cache, not controller
+**Input:** a fresh snapshot is available remotely.  
+**Expected:** relay returns telemetry/freshness only; it does not calculate `LAUNCH_BASE`, model tier, pace risk or future advance.
+
+## Test 144 — Chat tool has zero model-provided identity arguments
+**Input:** ChatGPT calls the canonical quota tool.  
+**Expected:** `get_quota_snapshot()` takes no installation id, email, token or account selector from the model; authenticated app identity resolves the installation server-side.
+
+## Test 145 — Chat tool is read-only
+**Input:** tool contract is inspected.  
+**Expected:** there is no credit purchase, paid reset, spending-control mutation, provider guard or generic write action in the quota tool surface.
+
+## Test 146 — remote Chat path is primary
+**Input:** browser/cloud ChatGPT is the regulator control plane.  
+**Expected:** normal telemetry path is authenticated remote app/relay; local MCP/tunnel support may be optional but is not required for ordinary onboarding.
+
+## Test 147 — local standalone path avoids unnecessary relay
+**Input:** regulator runs directly in local Codex with a working local sensor.  
+**Expected:** it may read the normalized local snapshot directly; remote relay is not a mandatory detour for standalone mode.
+
+## Test 148 — relay recomputes freshness
+**Input:** Companion uploaded a snapshot that later becomes old while no new upload arrives.  
+**Expected:** Chat-facing relay read reports stale age based on captured/received time; old `FRESH` text from the original payload cannot keep it fresh indefinitely.
+
+## Test 149 — source-only stack is not release-ready UX
+**Input:** Companion/relay reference code passes CI but no novice-friendly packaged Companion and authenticated Chat app path exist yet.  
+**Expected:** v3.0 remains development-only; passing core tests alone does not satisfy `ZERO_MAINTENANCE_USER_SETUP=REQUIRED`.
+
+## Test 150 — user stays out of quota bookkeeping
+**Input:** packaged Companion and Chat app are healthy during normal work.  
+**Expected:** user states goals and approvals only; periodic quota copying/pasting is not part of the normal orchestration loop.
