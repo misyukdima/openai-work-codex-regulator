@@ -15,7 +15,7 @@ jobs:
       - name: Update description and topics
         env:
           GH_TOKEN: ${{ github.token }}
-          DESCRIPTION: Skill-регулятор для ChatGPT, Work и Codex: распределяет задачи, бережёт общую квоту Work/Codex и не даёт экономии останавливать рабочий процесс.
+          DESCRIPTION: "Skill-регулятор для ChatGPT, Work и Codex: распределяет задачи, бережёт общую квоту Work/Codex и не даёт экономии останавливать рабочий процесс."
         shell: bash
         run: |
           set -euo pipefail
@@ -38,7 +38,7 @@ jobs:
       - name: Verify About
         env:
           GH_TOKEN: ${{ github.token }}
-          DESCRIPTION: Skill-регулятор для ChatGPT, Work и Codex: распределяет задачи, бережёт общую квоту Work/Codex и не даёт экономии останавливать рабочий процесс.
+          DESCRIPTION: "Skill-регулятор для ChatGPT, Work и Codex: распределяет задачи, бережёт общую квоту Work/Codex и не даёт экономии останавливать рабочий процесс."
         shell: bash
         run: |
           set -euo pipefail
