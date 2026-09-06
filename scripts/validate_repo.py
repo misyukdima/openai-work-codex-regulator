@@ -2,6 +2,7 @@
 """Repository validator for openai-work-codex-regulator v3.x."""
 from pathlib import Path
 import importlib.util
+import json
 import re
 import sys
 
@@ -16,9 +17,10 @@ REQUIRED = [
     "references/07_FAILURES_AND_RECOVERY.md", "references/08_MODEL_TIER_ROUTING.md",
     "references/09_ASTRA_EXECUTION.md", "references/10_WEEKLY_QUOTA_CONTROLLER.md",
     "references/11_ORCHESTRATION_AND_HANDOFF.md", "references/12_AUTONOMOUS_QUOTA_TELEMETRY.md",
-    "references/SOURCE_MAP.md",
+    "references/13_COMPANION_AND_CHAT_BRIDGE.md", "references/SOURCE_MAP.md",
     "tests/TEST_CASES.md", "tests/TEST_CASES_V2_2.md", "tests/TEST_CASES_V3_0.md",
     "scripts/weekly_quota_controller.py", "scripts/quota_telemetry.py",
+    "companion/quota_companion.py", "relay/quota_relay.py", "relay/get_quota_snapshot.tool.json",
     ".github/CODEOWNERS", ".github/PULL_REQUEST_TEMPLATE.md", ".github/ISSUE_TEMPLATE/bug.md",
     ".github/ISSUE_TEMPLATE/rule-change.md", ".github/workflows/validate.yml", ".github/workflows/release.yml",
 ]
@@ -139,6 +141,19 @@ TELEMETRY_INVARIANTS = [
     "QUOTA_TELEMETRY_STATE=<FRESH|STALE|UNAVAILABLE|CONFLICT|UNKNOWN>",
 ]
 
+BRIDGE_INVARIANTS = [
+    "CHATGPT_PRIMARY_ORCHESTRATOR=YES",
+    "CHAT_LOCALHOST_ASSUMPTION=FORBIDDEN",
+    "REMOTE_CHAT_TELEMETRY_PATH=REQUIRED",
+    "ZERO_MAINTENANCE_USER_SETUP=REQUIRED",
+    "MANUAL_QUOTA_INPUT=FALLBACK_ONLY",
+    "COMPANION_ROLE=SENSOR_TRANSPORT_ONLY",
+    "SENSOR_IMPLEMENTATION=PLUGGABLE",
+    "CODEXBAR_USER_PREREQUISITE=NO",
+    "RELAY_ROLE=READ_ONLY_TELEMETRY_CACHE",
+    "get_quota_snapshot()",
+]
+
 REQUIRED_SOURCES = [
     "https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex",
     "https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan",
@@ -152,6 +167,7 @@ REQUIRED_SOURCES = [
     "https://help.openai.com/en/articles/20001478-reviewing-work-and-codex-usage-and-using-personal-analytics-in-chatgpt-desktop",
     "https://help.openai.com/en/articles/20001256",
     "https://help.openai.com/en/articles/11487775-connectors-in-chatgpt",
+    "https://help.openai.com/en/articles/12584461-developer-mode-and-full-mcp-connectors-in-chatgpt-beta",
     "https://openai.com/products/release-notes/",
     "https://openai.com/index/gpt-6-astra/",
     "https://openai.com/index/safety-overview-gpt-6-astra/",
@@ -159,13 +175,13 @@ REQUIRED_SOURCES = [
     "https://developers.openai.com/api/docs/guides/latest-model",
 ]
 
-MIN_TESTS = 135
+MIN_TESTS = 150
 GENERATION_NEUTRAL_FILES = [
     "SKILL.md", "references/01_SURFACE_ROUTING.md", "references/03_TASK_CLASSIFICATION.md",
     "references/04_RUNWAY_AND_BURN.md", "references/05_WORK_BROWSER_AND_ACTIONS.md",
     "references/06_CODEX_TECHNICAL_WORK.md", "references/07_FAILURES_AND_RECOVERY.md",
     "references/10_WEEKLY_QUOTA_CONTROLLER.md", "references/11_ORCHESTRATION_AND_HANDOFF.md",
-    "references/12_AUTONOMOUS_QUOTA_TELEMETRY.md",
+    "references/12_AUTONOMOUS_QUOTA_TELEMETRY.md", "references/13_COMPANION_AND_CHAT_BRIDGE.md",
 ]
 MODEL_NAME_PATTERNS = [
     (r"\bGPT-\d", "hardcoded GPT-* generation name"),
@@ -241,6 +257,9 @@ for needle in HANDOFF_INVARIANTS:
 for needle in TELEMETRY_INVARIANTS:
     if needle not in read("references/12_AUTONOMOUS_QUOTA_TELEMETRY.md"):
         errors.append(f"autonomous telemetry reference missing required rule: {needle}")
+for needle in BRIDGE_INVARIANTS:
+    if needle not in read("references/13_COMPANION_AND_CHAT_BRIDGE.md"):
+        errors.append(f"companion/chat bridge reference missing required rule: {needle}")
 
 source_map = read("references/SOURCE_MAP.md")
 if not re.search(r"\*\*Verified:\*\*\s*\d{4}-\d{2}-\d{2}", source_map):
@@ -291,6 +310,24 @@ for section in executor_sections:
         if needle in section:
             errors.append(f"executor template leaks control-plane dependency/state: {needle}")
 
+# The canonical Chat-facing quota tool takes no model-supplied identity or secret.
+try:
+    tool_contract = json.loads(read("relay/get_quota_snapshot.tool.json"))
+    if tool_contract.get("name") != "get_quota_snapshot":
+        errors.append("quota tool contract has wrong tool name")
+    input_schema = tool_contract.get("inputSchema") or {}
+    if input_schema.get("properties") != {} or input_schema.get("additionalProperties") is not False:
+        errors.append("get_quota_snapshot must have zero model-provided arguments")
+    security = tool_contract.get("security") or {}
+    if security.get("read_only") is not True:
+        errors.append("get_quota_snapshot tool must be read-only")
+    if security.get("model_visible_installation_id") is not False:
+        errors.append("quota tool must not expose installation id to the model")
+    if security.get("model_visible_reader_token") is not False:
+        errors.append("quota tool must not expose reader token to the model")
+except Exception as exc:
+    errors.append(f"quota tool contract validation failed: {exc}")
+
 
 def run_module_self_test(path: Path, module_name: str, label: str) -> None:
     if not path.is_file():
@@ -317,9 +354,19 @@ run_module_self_test(
     "quota_telemetry_validation",
     "quota telemetry",
 )
+run_module_self_test(
+    ROOT / "companion" / "quota_companion.py",
+    "quota_companion_validation",
+    "quota companion",
+)
+run_module_self_test(
+    ROOT / "relay" / "quota_relay.py",
+    "quota_relay_validation",
+    "quota relay",
+)
 
 scan_targets = set()
-for glob in ("*.md", "*.py", "*.yml", "*.yaml", "*.toml", "*.txt"):
+for glob in ("*.md", "*.py", "*.yml", "*.yaml", "*.toml", "*.txt", "*.json"):
     scan_targets.update(ROOT.rglob(glob))
 for path in sorted(scan_targets):
     if not path.is_file():
@@ -344,5 +391,5 @@ if errors:
 
 print(
     f"Repository validation OK — openai-work-codex-regulator v{version} "
-    f"({len(numbers)} tests, autonomous telemetry + balanced controller + self-contained handoff present)"
+    f"({len(numbers)} tests, autonomous telemetry + companion/relay + balanced controller present)"
 )
