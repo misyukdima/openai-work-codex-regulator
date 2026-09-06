@@ -150,7 +150,7 @@ python3 scripts/package_release.py
 | **v2.0** | Отдельный профиль Astra, allowance domains, steering и safety-pause semantics | [Открыть](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.0) |
 | **v1.2** | Маршрутизация Luna / Terra / Sol и выбор effort по сложности задачи | [Открыть](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v1.2) |
 | **v1.1** | Quota-saving routing, prompt-injection защита, account checks и release hardening | [Открыть](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v1.1) |
-| **v1.0** | Первая версия: surface routing, shared pool, risk classes, browser/Codex discipline | [Открыть](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v1.0) |
+| **v1.0** | Первая версия: surface routing, shared pool, risk classes, browser/Codex discipline | [CHANGELOG](CHANGELOG.md#10--2026-08-21) |
 
 Полная техническая история хранится в [CHANGELOG.md](CHANGELOG.md).
 
