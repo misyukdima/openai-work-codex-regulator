@@ -1,9 +1,9 @@
 # Official source map
 
-**Skill release:** 2.2  
+**Skill release:** 3.0  
 **Verified:** 2026-09-06
 
-Time-sensitive product facts must be checked against current first-party OpenAI documentation or actual account/workspace UI. Controller mathematics marked internal are regulator policy, not OpenAI limits.
+Time-sensitive product facts must be checked against current first-party OpenAI documentation or actual account/workspace UI. Controller mathematics and autonomous-telemetry policy marked internal are regulator policy, not OpenAI limits.
 
 ## Product roles / surface routing
 
@@ -11,7 +11,7 @@ Sources:
 - https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex
 
 Rules:
-- Chat = conversational/bounded orchestration;
+- Chat = conversational/bounded orchestration and preferred regulator control plane;
 - Work = longer multi-step research/apps/deliverables/actions;
 - Codex = technical/software work.
 
@@ -42,6 +42,56 @@ Operational consequences:
 - aggregate meter is stronger for total continuity than chat-local totals;
 - reporting may lag, so `PENDING_BURN=YES` can block another large future advance without blocking safe Chat progress.
 
+## Plugins / connected apps for ChatGPT-accessible telemetry
+
+Sources:
+- https://help.openai.com/en/articles/20001256
+- https://help.openai.com/en/articles/11487775-connectors-in-chatgpt
+
+Current product architecture allows plugins to package skills and connected apps; apps are the integration boundary for bringing external data/actions into ChatGPT or Codex subject to account/workspace permissions.
+
+Operational consequences for v3.0:
+- browser/cloud ChatGPT must not assume direct access to a local process, local filesystem or localhost;
+- automatic quota telemetry for ChatGPT therefore needs a supported Chat-accessible app/tool boundary;
+- connected-app availability remains account/workspace dependent and cannot be invented by the skill;
+- installation/authorization requirements cannot be bypassed by the regulator.
+
+## v3.0 autonomous quota telemetry — internal policy
+
+Normative source: `references/12_AUTONOMOUS_QUOTA_TELEMETRY.md`.
+
+```text
+CHATGPT_PRIMARY_ORCHESTRATOR=YES
+AUTO_QUOTA_TELEMETRY=DEFAULT
+MANUAL_QUOTA_INPUT=FALLBACK_ONLY
+ZERO_MAINTENANCE_USER_SETUP=REQUIRED
+CHAT_LOCALHOST_ASSUMPTION=FORBIDDEN
+CHAT_LOCAL_SHELL_ASSUMPTION=FORBIDDEN
+```
+
+Operational design:
+- ChatGPT remains the preferred control plane;
+- quota state is refreshed automatically when a supported telemetry tool is available;
+- manual quota input remains accepted only as a fallback;
+- telemetry provider supplies meter/reset evidence only and never becomes an admission controller;
+- final ordinary-user setup must not require Terminal, token copy/paste, manual localhost/tunnel setup or periodic quota messages.
+
+## CodexBar reference adapter — third-party implementation evidence
+
+Implementation references:
+- https://github.com/steipete/CodexBar/blob/main/docs/cli.md
+- https://github.com/steipete/CodexBar/blob/main/docs/codex-oauth.md
+
+CodexBar documents structured Codex usage output and a read-only OAuth usage path. It is used only as the first reference sensor/normalization target, not as a normative OpenAI product source and not as a permanent user-facing dependency.
+
+Internal adapter rules:
+- `RATE_WINDOW_POSITION_IS_NOT_SEMANTICS`;
+- classify 300-minute windows as 5h and 10080-minute windows as weekly;
+- preserve unknown window durations as unknown/other rather than guessing;
+- never copy OAuth tokens, cookies or raw auth material into regulator snapshots.
+
+Reference parser: `scripts/quota_telemetry.py`.
+
 ## Paid weekly reset
 
 Source:
@@ -50,7 +100,8 @@ Source:
 Operational consequences:
 - `PAID_WEEKLY_RESET_ALLOWED=NO` by default;
 - purchase is separate class-4 money action;
-- applied reset creates a new quota epoch/controller anchor.
+- applied reset creates a new quota epoch/controller anchor;
+- automatic telemetry remains read-only and cannot trigger the purchase.
 
 ## Chat allowance separation
 
@@ -62,7 +113,7 @@ Operational consequence:
 - Chat-model allowance is not spare Work/Codex allowance;
 - `ALLOWANCE_DOMAIN=WORK_CODEX|CHAT_PRO|API|UNKNOWN` remains explicit.
 
-## v2.2 controller — internal policy
+## v2.2 controller — retained internal policy
 
 Normative source: `references/10_WEEKLY_QUOTA_CONTROLLER.md`.
 
@@ -75,7 +126,7 @@ MAX_ADVANCE_HOURS = 72
 BALANCED_PRIORITY=QUOTA_50_PACE_50
 ```
 
-v2.2 internal design:
+v3.0 intentionally retains the proven v2.2 mathematical design:
 - one absolute epoch-anchored cumulative trajectory;
 - 24h is normal look-ahead, not hard waiting boundary;
 - bounded future advance up to 72h of anchored trajectory;
@@ -84,7 +135,7 @@ v2.2 internal design:
 
 These constants and risk levels are not OpenAI limits or statistical guarantees.
 
-## v2.2 orchestration contract — internal policy
+## v2.2 orchestration contract — retained internal policy
 
 Normative source: `references/11_ORCHESTRATION_AND_HANDOFF.md`.
 
@@ -96,9 +147,10 @@ EXECUTOR_SKILL_REQUIRED=NO
 
 Operational consequence:
 - the surface with regulator resolves quota/model/admission;
+- Chat is the preferred owner in normal v3.0 operation;
 - downstream Work/Codex executor receives a complete execution packet;
 - executor success must not depend on regulator installation;
-- internal quota/risk math is not copied into ordinary executor prompts.
+- internal quota/risk/telemetry plumbing is not copied into ordinary executor prompts.
 
 ## Burn estimator — internal policy
 
@@ -107,6 +159,8 @@ Operational consequence:
 - 3–5: `max(P80, median + 1.645 * 1.4826 * MAD) + g`;
 - max five materially comparable observations;
 - MIXED intervals are upper bounds, not exact pass attribution.
+
+Automatic telemetry improves sample collection but does not change this estimator.
 
 ## Quality floor — internal policy
 
@@ -165,4 +219,4 @@ Operational consequences:
 
 ## Internal policies summary
 
-Internal regulator policies include class 0–4, `ONE_GATE = ONE_PRIMARY_SURFACE`, bounded Chat routing, equal quota/pace priority, anchored trajectory, bounded future advance, robust B_SAFE, separate 5h breaker, pending-burn handling, scheduled reservations, quality floor, self-contained executor handoff, no downstream skill dependency, paid spend disabled by default, two-attempt rule, exact Git staging and Astra-specific admission/safety controls.
+Internal regulator policies include class 0–4, `ONE_GATE = ONE_PRIMARY_SURFACE`, bounded Chat routing, ChatGPT-first orchestration, automatic quota telemetry with manual fallback, equal quota/pace priority, anchored trajectory, bounded future advance, robust B_SAFE, separate 5h breaker, pending-burn handling, scheduled reservations, quality floor, self-contained executor handoff, no downstream skill dependency, paid spend disabled by default, two-attempt rule, exact Git staging and Astra-specific admission/safety controls.
