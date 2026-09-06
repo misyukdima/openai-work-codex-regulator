@@ -1,7 +1,7 @@
 # Official source map
 
 **Skill release:** 3.0  
-**Verified:** 2026-09-06
+**Verified:** 2026-09-07
 
 Time-sensitive product facts must be checked against current first-party OpenAI documentation or actual account/workspace UI. Controller mathematics and autonomous-telemetry policy marked internal are regulator policy, not OpenAI limits.
 
@@ -42,19 +42,23 @@ Operational consequences:
 - aggregate meter is stronger for total continuity than chat-local totals;
 - reporting may lag, so `PENDING_BURN=YES` can block another large future advance without blocking safe Chat progress.
 
-## Plugins / connected apps for ChatGPT-accessible telemetry
+## Plugins / connected apps / remote MCP for Chat telemetry
 
 Sources:
 - https://help.openai.com/en/articles/20001256
 - https://help.openai.com/en/articles/11487775-connectors-in-chatgpt
+- https://help.openai.com/en/articles/12584461-developer-mode-and-full-mcp-connectors-in-chatgpt-beta
 
-Current product architecture allows plugins to package skills and connected apps; apps are the integration boundary for bringing external data/actions into ChatGPT or Codex subject to account/workspace permissions.
+Current OpenAI guidance says ChatGPT connects to remote MCP servers rather than directly to a local MCP server. Private/on-prem/developer-machine MCP can require Secure MCP Tunnel where supported. Custom app/MCP availability and write capability remain plan/workspace dependent.
 
 Operational consequences for v3.0:
-- browser/cloud ChatGPT must not assume direct access to a local process, local filesystem or localhost;
-- automatic quota telemetry for ChatGPT therefore needs a supported Chat-accessible app/tool boundary;
+- browser/cloud ChatGPT must not assume direct access to a local process, local filesystem or `127.0.0.1`;
+- the ordinary ChatGPT-first quota path therefore needs a remote Chat-accessible app/tool boundary;
+- Secure MCP Tunnel may be an optional transport, not a universal prerequisite;
 - connected-app availability remains account/workspace dependent and cannot be invented by the skill;
 - installation/authorization requirements cannot be bypassed by the regulator.
+
+Normative transport contract: `references/13_COMPANION_AND_CHAT_BRIDGE.md`.
 
 ## v3.0 autonomous quota telemetry — internal policy
 
@@ -82,15 +86,38 @@ Implementation references:
 - https://github.com/steipete/CodexBar/blob/main/docs/cli.md
 - https://github.com/steipete/CodexBar/blob/main/docs/codex-oauth.md
 
-CodexBar documents structured Codex usage output and a read-only OAuth usage path. It is used only as the first reference sensor/normalization target, not as a normative OpenAI product source and not as a permanent user-facing dependency.
+CodexBar documents structured Codex usage output and a read-only OAuth usage path. Its OAuth resolver calls the same usage endpoint family used by Codex while leaving credential refresh/persistence to the Codex CLI that owns the auth state.
+
+It is used only as the first reference sensor/normalization target, not as a normative OpenAI product source and not as a permanent user-facing dependency.
 
 Internal adapter rules:
 - `RATE_WINDOW_POSITION_IS_NOT_SEMANTICS`;
 - classify 300-minute windows as 5h and 10080-minute windows as weekly;
 - preserve unknown window durations as unknown/other rather than guessing;
-- never copy OAuth tokens, cookies or raw auth material into regulator snapshots.
+- never copy OAuth tokens, cookies or raw auth material into regulator snapshots;
+- CodexBar pacing/guard behavior never becomes regulator admission policy.
 
 Reference parser: `scripts/quota_telemetry.py`.
+Reference local sensor boundary: `companion/quota_companion.py`.
+
+## Companion + relay — internal policy
+
+Normative source: `references/13_COMPANION_AND_CHAT_BRIDGE.md`.
+
+```text
+COMPANION_ROLE=SENSOR_TRANSPORT_ONLY
+RELAY_ROLE=READ_ONLY_TELEMETRY_CACHE
+REMOTE_CHAT_TELEMETRY_PATH=REQUIRED
+CODEXBAR_USER_PREREQUISITE=NO
+```
+
+Operational design:
+- local sensor state is normalized before upload;
+- relay receives no OpenAI OAuth token, browser cookie or raw auth file;
+- device-write and Chat-reader authorization are separate;
+- canonical Chat tool is read-only `get_quota_snapshot()` with no model-provided identity/secret arguments;
+- the relay does not calculate routing, model tier, pace risk or quota admission;
+- source-only reference code is not enough for release readiness: v3.0 additionally requires novice-friendly packaging and an authenticated Chat-accessible deployment path.
 
 ## Paid weekly reset
 
@@ -219,4 +246,4 @@ Operational consequences:
 
 ## Internal policies summary
 
-Internal regulator policies include class 0–4, `ONE_GATE = ONE_PRIMARY_SURFACE`, bounded Chat routing, ChatGPT-first orchestration, automatic quota telemetry with manual fallback, equal quota/pace priority, anchored trajectory, bounded future advance, robust B_SAFE, separate 5h breaker, pending-burn handling, scheduled reservations, quality floor, self-contained executor handoff, no downstream skill dependency, paid spend disabled by default, two-attempt rule, exact Git staging and Astra-specific admission/safety controls.
+Internal regulator policies include class 0–4, `ONE_GATE = ONE_PRIMARY_SURFACE`, bounded Chat routing, ChatGPT-first orchestration, automatic quota telemetry with manual fallback, Companion/remote relay transport, equal quota/pace priority, anchored trajectory, bounded future advance, robust B_SAFE, separate 5h breaker, pending-burn handling, scheduled reservations, quality floor, self-contained executor handoff, no downstream skill dependency, paid spend disabled by default, two-attempt rule, exact Git staging and Astra-specific admission/safety controls.
