@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repository validator for openai-work-codex-regulator v2.x."""
+"""Repository validator for openai-work-codex-regulator v3.x."""
 from pathlib import Path
 import importlib.util
 import re
@@ -15,8 +15,10 @@ REQUIRED = [
     "references/05_WORK_BROWSER_AND_ACTIONS.md", "references/06_CODEX_TECHNICAL_WORK.md",
     "references/07_FAILURES_AND_RECOVERY.md", "references/08_MODEL_TIER_ROUTING.md",
     "references/09_ASTRA_EXECUTION.md", "references/10_WEEKLY_QUOTA_CONTROLLER.md",
-    "references/11_ORCHESTRATION_AND_HANDOFF.md", "references/SOURCE_MAP.md",
-    "tests/TEST_CASES.md", "tests/TEST_CASES_V2_2.md", "scripts/weekly_quota_controller.py",
+    "references/11_ORCHESTRATION_AND_HANDOFF.md", "references/12_AUTONOMOUS_QUOTA_TELEMETRY.md",
+    "references/SOURCE_MAP.md",
+    "tests/TEST_CASES.md", "tests/TEST_CASES_V2_2.md", "tests/TEST_CASES_V3_0.md",
+    "scripts/weekly_quota_controller.py", "scripts/quota_telemetry.py",
     ".github/CODEOWNERS", ".github/PULL_REQUEST_TEMPLATE.md", ".github/ISSUE_TEMPLATE/bug.md",
     ".github/ISSUE_TEMPLATE/rule-change.md", ".github/workflows/validate.yml", ".github/workflows/release.yml",
 ]
@@ -29,6 +31,14 @@ SKILL_INVARIANTS = [
     "HANDOFF_SELF_CONTAINED=YES",
     "EXECUTOR_SKILL_REQUIRED=NO",
     "CONTROL_PLANE_OWNER=<CHAT|WORK|CODEX>",
+    "CHATGPT_PRIMARY_ORCHESTRATOR=YES",
+    "AUTO_QUOTA_TELEMETRY=DEFAULT",
+    "MANUAL_QUOTA_INPUT=FALLBACK_ONLY",
+    "ZERO_MAINTENANCE_USER_SETUP=REQUIRED",
+    "CHAT_LOCALHOST_ASSUMPTION=FORBIDDEN",
+    "CHAT_LOCAL_SHELL_ASSUMPTION=FORBIDDEN",
+    "QUOTA_TOOL=get_quota_snapshot",
+    "QUOTA_TELEMETRY_STATE=<FRESH|STALE|UNAVAILABLE|CONFLICT|UNKNOWN>",
     "PAID_CREDITS_ALLOWED=NO",
     "PAID_WEEKLY_RESET_ALLOWED=NO",
     "ALLOWANCE_DOMAIN=<WORK_CODEX|CHAT_PRO|API|UNKNOWN>",
@@ -50,6 +60,7 @@ SKILL_INVARIANTS = [
     "CODEX_CLIENT_ASTRA_READY=YES|NO|UNKNOWN|N/A",
     "INJECTION_ATTEMPT",
     "Downloading ≠ permission to execute",
+    "RATE_WINDOW_POSITION_IS_NOT_SEMANTICS",
     "SURFACE: CHATGPT_WORK",
     "SURFACE: CODEX",
     "STOP AFTER REPORT",
@@ -114,6 +125,20 @@ HANDOFF_INVARIANTS = [
     "EFFICIENCY_POSTURE=MINIMIZE_WASTE_WITHOUT_QUALITY_LOSS",
 ]
 
+TELEMETRY_INVARIANTS = [
+    "CHATGPT_PRIMARY_ORCHESTRATOR=YES",
+    "AUTO_QUOTA_TELEMETRY=DEFAULT",
+    "MANUAL_QUOTA_INPUT=FALLBACK_ONLY",
+    "ZERO_MAINTENANCE_USER_SETUP=REQUIRED",
+    "CHAT_LOCALHOST_ASSUMPTION=FORBIDDEN",
+    "CHAT_LOCAL_SHELL_ASSUMPTION=FORBIDDEN",
+    "get_quota_snapshot()",
+    "RATE_WINDOW_POSITION_IS_NOT_SEMANTICS",
+    "300 minutes   → FIVE_HOUR",
+    "10080 minutes → WEEKLY",
+    "QUOTA_TELEMETRY_STATE=<FRESH|STALE|UNAVAILABLE|CONFLICT|UNKNOWN>",
+]
+
 REQUIRED_SOURCES = [
     "https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex",
     "https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan",
@@ -125,6 +150,8 @@ REQUIRED_SOURCES = [
     "https://help.openai.com/en/articles/20001415-chatgpt-rate-card-enterprise-token-based-pricing",
     "https://help.openai.com/en/articles/20001507-paid-weekly-work-and-codex-rate-limit-resets",
     "https://help.openai.com/en/articles/20001478-reviewing-work-and-codex-usage-and-using-personal-analytics-in-chatgpt-desktop",
+    "https://help.openai.com/en/articles/20001256",
+    "https://help.openai.com/en/articles/11487775-connectors-in-chatgpt",
     "https://openai.com/products/release-notes/",
     "https://openai.com/index/gpt-6-astra/",
     "https://openai.com/index/safety-overview-gpt-6-astra/",
@@ -132,12 +159,13 @@ REQUIRED_SOURCES = [
     "https://developers.openai.com/api/docs/guides/latest-model",
 ]
 
-MIN_TESTS = 115
+MIN_TESTS = 135
 GENERATION_NEUTRAL_FILES = [
     "SKILL.md", "references/01_SURFACE_ROUTING.md", "references/03_TASK_CLASSIFICATION.md",
     "references/04_RUNWAY_AND_BURN.md", "references/05_WORK_BROWSER_AND_ACTIONS.md",
     "references/06_CODEX_TECHNICAL_WORK.md", "references/07_FAILURES_AND_RECOVERY.md",
     "references/10_WEEKLY_QUOTA_CONTROLLER.md", "references/11_ORCHESTRATION_AND_HANDOFF.md",
+    "references/12_AUTONOMOUS_QUOTA_TELEMETRY.md",
 ]
 MODEL_NAME_PATTERNS = [
     (r"\bGPT-\d", "hardcoded GPT-* generation name"),
@@ -168,8 +196,8 @@ for rel in REQUIRED:
 version = read("VERSION").strip()
 if not re.fullmatch(r"\d+\.\d+", version):
     errors.append("VERSION must be major.minor")
-if version and not version.startswith("2."):
-    errors.append("v2 validator requires VERSION 2.x")
+if version and not version.startswith("3."):
+    errors.append("v3 validator requires VERSION 3.x")
 
 readme = read("README.md")
 if version and f"v{version}" not in readme:
@@ -178,13 +206,17 @@ changelog = read("CHANGELOG.md")
 if version and not re.search(rf"^##\s+{re.escape(version)}\b", changelog, re.M):
     errors.append(f"CHANGELOG.md missing heading for version {version}")
 
-raw_tests = read("tests/TEST_CASES.md") + "\n" + read("tests/TEST_CASES_V2_2.md")
+raw_tests = (
+    read("tests/TEST_CASES.md")
+    + "\n" + read("tests/TEST_CASES_V2_2.md")
+    + "\n" + read("tests/TEST_CASES_V3_0.md")
+)
 numbers = [int(n) for n in re.findall(r"^## Test (\d+)\b", raw_tests, re.M)]
 if not numbers:
     errors.append("no numbered tests found")
 else:
     if numbers != list(range(1, max(numbers) + 1)):
-        errors.append("tests are not numbered contiguously from 1 across base + v2.2 files")
+        errors.append("tests are not numbered contiguously from 1 across base + version additions")
     if len(numbers) < MIN_TESTS:
         errors.append(f"tests count {len(numbers)} < {MIN_TESTS}")
 
@@ -206,12 +238,15 @@ for needle in CONTROLLER_INVARIANTS:
 for needle in HANDOFF_INVARIANTS:
     if needle not in read("references/11_ORCHESTRATION_AND_HANDOFF.md"):
         errors.append(f"handoff reference missing required rule: {needle}")
+for needle in TELEMETRY_INVARIANTS:
+    if needle not in read("references/12_AUTONOMOUS_QUOTA_TELEMETRY.md"):
+        errors.append(f"autonomous telemetry reference missing required rule: {needle}")
 
 source_map = read("references/SOURCE_MAP.md")
 if not re.search(r"\*\*Verified:\*\*\s*\d{4}-\d{2}-\d{2}", source_map):
     errors.append("SOURCE_MAP.md missing verification date")
-if "**Skill release:** 2.2" not in source_map:
-    errors.append("SOURCE_MAP.md is not marked for release 2.2")
+if "**Skill release:** 3.0" not in source_map:
+    errors.append("SOURCE_MAP.md is not marked for release 3.0")
 for url in REQUIRED_SOURCES:
     if url not in source_map:
         errors.append(f"SOURCE_MAP missing official source: {url}")
@@ -222,12 +257,13 @@ for rel in GENERATION_NEUTRAL_FILES:
         if re.search(pattern, text):
             errors.append(f"{rel} contains {label}; move dated model facts to dated model/source references")
 
-# Ordinary executor templates must remain independent from controller installation and internal quota math.
+# Ordinary executor templates must remain independent from controller installation,
+# automatic telemetry plumbing and internal quota math.
 skill = read("SKILL.md")
 executor_sections = []
 for start_heading, end_heading in [
     ("## 19. Work executor packet", "## 20. Codex executor packet"),
-    ("## 20. Codex executor packet", "## 21. Failure / recovery"),
+    ("## 20. Codex executor packet", "## 21. Telemetry provider discipline"),
 ]:
     start = skill.find(start_heading)
     end = skill.find(end_heading)
@@ -245,6 +281,9 @@ FORBIDDEN_EXECUTOR_LEAKS = [
     "QUOTA_RISK_IF_LAUNCH",
     "BORROWABLE_EXTRA_PP",
     "PAID_WEEKLY_RESET_ALLOWED",
+    "QUOTA_TELEMETRY_SOURCE",
+    "QUOTA_TELEMETRY_STATE",
+    "get_quota_snapshot",
     "openai-work-codex-regulator",
 ]
 for section in executor_sections:
@@ -252,18 +291,32 @@ for section in executor_sections:
         if needle in section:
             errors.append(f"executor template leaks control-plane dependency/state: {needle}")
 
-controller_path = ROOT / "scripts" / "weekly_quota_controller.py"
-if controller_path.is_file():
+
+def run_module_self_test(path: Path, module_name: str, label: str) -> None:
+    if not path.is_file():
+        return
     try:
-        spec = importlib.util.spec_from_file_location("weekly_quota_controller_validation", controller_path)
+        spec = importlib.util.spec_from_file_location(module_name, path)
         if spec is None or spec.loader is None:
-            raise RuntimeError("cannot load controller module spec")
+            raise RuntimeError("cannot load module spec")
         module = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = module
         spec.loader.exec_module(module)
         module.self_test()
     except Exception as exc:
-        errors.append(f"weekly quota controller self-test failed: {exc}")
+        errors.append(f"{label} self-test failed: {exc}")
+
+
+run_module_self_test(
+    ROOT / "scripts" / "weekly_quota_controller.py",
+    "weekly_quota_controller_validation",
+    "weekly quota controller",
+)
+run_module_self_test(
+    ROOT / "scripts" / "quota_telemetry.py",
+    "quota_telemetry_validation",
+    "quota telemetry",
+)
 
 scan_targets = set()
 for glob in ("*.md", "*.py", "*.yml", "*.yaml", "*.toml", "*.txt"):
@@ -291,5 +344,5 @@ if errors:
 
 print(
     f"Repository validation OK — openai-work-codex-regulator v{version} "
-    f"({len(numbers)} tests, balanced trajectory controller + self-contained handoff present)"
+    f"({len(numbers)} tests, autonomous telemetry + balanced controller + self-contained handoff present)"
 )
