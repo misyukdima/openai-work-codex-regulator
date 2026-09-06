@@ -2,50 +2,99 @@
 
 # OpenAI Work + Codex Regulator
 
-**Skill-регулятор для ChatGPT, Work и Codex: держит под контролем общую квоту, темп работы, выбор модели и границы каждого запуска.**
+**Skill-регулятор для ChatGPT, Work и Codex: управляет общей квотой, темпом работы, выбором модели и границами каждого запуска.**
 
-[![Версия](https://img.shields.io/badge/версия-v2.2-0969da)](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.2)
+[![Разработка](https://img.shields.io/badge/development-v3.0-8250df)](CHANGELOG.md#30--in-development)
+[![Stable](https://img.shields.io/badge/stable-v2.2-0969da)](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.2)
 [![Проверка](https://github.com/misyukdima/openai-work-codex-regulator/actions/workflows/validate.yml/badge.svg)](https://github.com/misyukdima/openai-work-codex-regulator/actions/workflows/validate.yml)
-[![Тесты](https://img.shields.io/badge/regression_tests-115-success)](tests/)
+[![Тесты](https://img.shields.io/badge/regression_tests-135-success)](tests/)
 
-[Последний релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/latest) · [Как использовать](docs/USAGE.md) · [Архитектура](docs/ARCHITECTURE.md) · [История изменений](CHANGELOG.md)
+[Последний стабильный релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/latest) · [Как использовать](docs/USAGE.md) · [Архитектура](docs/ARCHITECTURE.md) · [История изменений](CHANGELOG.md)
 
 </div>
+
+> **v3.0 находится в разработке в отдельной feature-ветке.** Стабильный `main` и опубликованный релиз остаются на `v2.2` до завершения реализации, Pull Request и review.
 
 ## Что это
 
 `openai-work-codex-regulator` управляет агентской работой между тремя поверхностями ChatGPT:
 
-- **Chat** планирует, проверяет и оркестрирует;
+- **Chat** — предпочтительный control plane: планирует, проверяет и оркестрирует;
 - **Work** берёт длинные браузерные и многошаговые задачи;
 - **Codex** работает с кодом, репозиториями, терминалом, тестами и деплоем.
 
 Регулятор решает, куда отправить следующий gate, какую модель и effort выбрать, сколько общей Work/Codex-квоты разумно потратить сейчас и когда выгоднее продолжить работу другим способом.
 
-Главная идея проста: квота нужна не ради самой экономии. Она должна дожить до reset, но рабочий процесс тоже не должен вставать без веской причины.
+Главная идея: квота нужна не ради самой экономии. Она должна дожить до reset, но рабочий процесс тоже не должен вставать без веской причины.
 
-## Зачем он нужен
+## Что меняется в v3.0
 
-Без регулятора длинный проект легко уходит в одну из двух крайностей. Либо Work/Codex быстро съедают недельный лимит, либо система начинает слишком беречь остаток и откладывает полезную работу.
+До `v2.2` актуальный quota snapshot обычно приходил от пользователя или из текущего контекста. Это работало, но заставляло человека периодически открывать Usage, смотреть проценты/reset и переносить их в разговор.
 
-Проект держит середину:
+`v3.0` меняет сам UX:
 
-- считает Work и Codex общей `ALLOWANCE_DOMAIN=WORK_CODEX`;
-- сохраняет `QUALITY_FLOOR=NON_NEGOTIABLE`;
-- балансирует сохранение квоты и темп проекта как `QUOTA_50_PACE_50`;
-- не заставляет downstream Codex или Work иметь этот skill;
-- передаёт между поверхностями компактный self-contained handoff;
-- сохраняет scope, permissions, rollback, tests и evidence как обязательные границы.
+```text
+AUTO_QUOTA_TELEMETRY=DEFAULT
+MANUAL_QUOTA_INPUT=FALLBACK_ONLY
+CHATGPT_PRIMARY_ORCHESTRATOR=YES
+ZERO_MAINTENANCE_USER_SETUP=REQUIRED
+```
 
-## Актуальная версия: v2.2
+В нормальном сценарии ChatGPT сам получает свежую quota telemetry через доступный connected tool, перед quota-sensitive запуском обновляет controller state и продолжает orchestration. Ручной snapshot остаётся аварийным fallback, а не обязанностью пользователя.
 
-`v2.2` появилась после полевых тестов `v2.1`. Предыдущий контроллер слишком жёстко воспринимал 24-часовое окно и мог отправить проект ждать сутки, хотя критический путь уже был заблокирован.
+При этом математика `v2.2` не выбрасывается. Epoch-anchored trajectory, bounded future advance, burn estimator, 5h breaker, hard quality floor и баланс `QUOTA_50_PACE_50` остаются decision engine.
 
-Теперь 24 часа служат обычным ориентиром, а не таймером ожидания. Контроллер строит одну недельную cumulative trajectory и, когда это оправдано, может взять ограниченную часть будущего headroom. Решение сравнивает два риска: что случится с квотой, если запустить pass сейчас, и что случится с проектом, если его отложить.
+## Почему нужен отдельный telemetry layer
 
-Второе заметное изменение касается orchestration. Если регулятор загружен в Chat, а реализация уходит в Codex, Chat сам принимает quota/model/admission-решение. Codex получает готовый execution packet и не обязан искать или устанавливать `openai-work-codex-regulator`.
+Browser/cloud ChatGPT не может просто «вылезти» на компьютер пользователя, запустить локальный `codexbar` или прочитать `127.0.0.1`.
 
-Подробнее: [CHANGELOG v2.2](CHANGELOG.md#22--2026-09-06) и [контракт handoff](references/11_ORCHESTRATION_AND_HANDOFF.md).
+Поэтому архитектура строится так:
+
+```text
+local quota sensor
+        ↓
+sanitized snapshot
+        ↓
+Chat-accessible connected app/tool
+        ↓
+ChatGPT regulator
+        ↓
+v2.2 quota controller
+        ↓
+Work / Codex
+```
+
+```text
+CHAT_LOCALHOST_ASSUMPTION=FORBIDDEN
+CHAT_LOCAL_SHELL_ASSUMPTION=FORBIDDEN
+```
+
+ChatGPT остаётся мозгом системы. Telemetry provider — только датчик.
+
+## CodexBar в v3.0
+
+CodexBar используется как первый reference sensor, потому что умеет отдавать Codex usage в структурированном JSON. Но это **не обязательная пользовательская зависимость** и не новый quota controller.
+
+Ветка уже содержит `scripts/quota_telemetry.py`, который:
+
+- принимает CodexBar-compatible JSON;
+- нормализует weekly и 5h windows;
+- классифицирует окна по длительности, а не по `primary/secondary`;
+- отслеживает freshness;
+- не читает OAuth tokens/cookies сам;
+- не принимает решения о запуске Work/Codex.
+
+Ключевой invariant:
+
+```text
+RATE_WINDOW_POSITION_IS_NOT_SEMANTICS
+```
+
+```text
+300 minutes   → FIVE_HOUR
+10080 minutes → WEEKLY
+other         → OTHER_WINDOW
+```
 
 ## Как принимается решение
 
@@ -55,6 +104,8 @@
 класс риска + требуемый gate
   ↓
 Chat / Work / Codex
+  ↓
+automatic quota refresh when needed
   ↓
 minimum sufficient model
   ↓
@@ -71,12 +122,10 @@ launch / launch with advance / productive alternative / defer / stop
 
 ## Control plane и execution plane
 
-Это одна из главных частей `v2.2`.
-
 ```text
 Chat + regulator
       ↓
-quota / routing / model / admission
+quota telemetry / routing / model / admission
       ↓
 self-contained handoff
       ↓
@@ -87,21 +136,29 @@ execution + evidence
 Chat принимает следующее решение
 ```
 
-Downstream executor получает цель, fact pack, read/write scope, no-touch, tests, rollback и stop conditions. Внутренняя математика квоты остаётся у оркестратора.
+Downstream executor получает цель, fact pack, read/write scope, no-touch, tests, rollback и stop conditions. Внутренняя математика квоты и telemetry plumbing остаются у оркестратора.
 
 ```text
 HANDOFF_SELF_CONTAINED=YES
 EXECUTOR_SKILL_REQUIRED=NO
 ```
 
-## Установка
+Прямой запуск regulator в Codex или Work остаётся поддержанным standalone-режимом. Это portability feature, а не отказ от ChatGPT-first архитектуры.
 
-1. Откройте [Releases](https://github.com/misyukdima/openai-work-codex-regulator/releases/latest).
-2. Скачайте `openai-work-codex-regulator-v2.2.zip`.
-3. Распакуйте архив в каталог skills вашей рабочей среды.
-4. Entry point проекта: `openai-work-codex-regulator/SKILL.md`.
+## Zero-maintenance цель
 
-К каждому современному релизу приложен SHA-256 checksum, чтобы архив можно было проверить после скачивания.
+Финальная `v3.0` не считается готовой, если обычному пользователю для штатной установки приходится:
+
+- открывать Terminal;
+- устанавливать Homebrew;
+- отдельно настраивать CodexBar;
+- править JSON/YAML;
+- копировать OAuth/API tokens;
+- вручную настраивать localhost или tunnel;
+- разбираться в MCP;
+- периодически сообщать ChatGPT состояние квоты.
+
+Технические debug/fallback пути могут существовать для разработчиков, но не должны становиться обычным onboarding.
 
 ## Что лежит в репозитории
 
@@ -119,17 +176,21 @@ references/                           нормативные правила
   09_ASTRA_EXECUTION.md               Astra admission
   10_WEEKLY_QUOTA_CONTROLLER.md       недельный quota controller
   11_ORCHESTRATION_AND_HANDOFF.md     self-contained handoff
-  SOURCE_MAP.md                       first-party источники
+  12_AUTONOMOUS_QUOTA_TELEMETRY.md    автоматическая quota telemetry
+  SOURCE_MAP.md                       provenance
 
 docs/                                 архитектура и использование
-scripts/                              validation и controller tooling
+scripts/
+  weekly_quota_controller.py          математический decision engine
+  quota_telemetry.py                  telemetry normalizer
 tests/                                regression cases
 ```
 
-## Проверка репозитория
+## Проверка ветки v3.0
 
 ```bash
 python3 scripts/validate_repo.py
+python3 scripts/quota_telemetry.py --self-test
 python3 scripts/weekly_quota_controller.py \
   --anchor-weekly-used 0 \
   --anchor-hours-to-reset 168 \
@@ -139,36 +200,50 @@ python3 scripts/weekly_quota_controller.py \
 python3 scripts/package_release.py
 ```
 
-Текущая ветка `main` проверяется GitHub Actions. В `v2.2` набор содержит **115 regression tests**, включая сценарии с quota trajectory, future advance и Chat -> Codex handoff без установленного downstream skill.
+Ветка `v3.0` должна пройти **135 regression tests** до Pull Request в `main`.
+
+## Текущее состояние разработки
+
+Уже реализовано на feature-ветке:
+
+- v3.0 telemetry policy;
+- ChatGPT-first/cloud-local boundary;
+- manual-as-fallback semantics;
+- normalized quota tool contract;
+- CodexBar-compatible normalizer;
+- freshness/window classification;
+- regression coverage и validator integration.
+
+До merge/release readiness ещё нужен конечный zero-friction Chat-accessible companion/app transport. Пока этот слой не реализован и не проверен end-to-end, `v3.0` не должна сливаться в `main`.
 
 ## История версий
 
-| Версия | Что изменилось | Релиз |
+| Версия | Что изменилось | Статус |
 | --- | --- | --- |
-| **v2.2** | Баланс квоты и рабочего темпа, cumulative trajectory, bounded future advance, независимый downstream executor | [Открыть](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.2) |
-| **v2.1** | Адаптивный недельный quota controller, burn estimation, 24h control slice, quality floor | [Открыть](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.1) |
-| **v2.0** | Отдельный профиль Astra, allowance domains, steering и safety-pause semantics | [Открыть](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.0) |
-| **v1.2** | Маршрутизация Luna / Terra / Sol и выбор effort по сложности задачи | [Открыть](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v1.2) |
-| **v1.1** | Quota-saving routing, prompt-injection защита, account checks и release hardening | [Открыть](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v1.1) |
+| **v3.0** | Autonomous quota telemetry, ChatGPT-first bridge contract, manual fallback, zero-maintenance UX | В разработке |
+| **v2.2** | Баланс квоты и рабочего темпа, cumulative trajectory, bounded future advance, независимый downstream executor | [Релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.2) |
+| **v2.1** | Адаптивный недельный quota controller, burn estimation, 24h control slice, quality floor | [Релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.1) |
+| **v2.0** | Отдельный профиль Astra, allowance domains, steering и safety-pause semantics | [Релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.0) |
+| **v1.2** | Маршрутизация Luna / Terra / Sol и выбор effort по сложности задачи | [Релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v1.2) |
+| **v1.1** | Quota-saving routing, prompt-injection защита, account checks и release hardening | [Релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v1.1) |
 | **v1.0** | Первая версия: surface routing, shared pool, risk classes, browser/Codex discipline | [CHANGELOG](CHANGELOG.md#10--2026-08-21) |
-
-Полная техническая история хранится в [CHANGELOG.md](CHANGELOG.md).
 
 ## Документация
 
-- [SKILL.md](SKILL.md) - основной исполняемый регламент.
-- [docs/USAGE.md](docs/USAGE.md) - примеры использования и рабочие паттерны.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - устройство регулятора.
-- [references/SOURCE_MAP.md](references/SOURCE_MAP.md) - карта first-party OpenAI источников и времязависимых фактов.
-- [SECURITY.md](SECURITY.md) - правила безопасности.
-- [CONTRIBUTING.md](CONTRIBUTING.md) - правила изменений в репозитории.
+- [SKILL.md](SKILL.md) — основной исполняемый регламент.
+- [docs/USAGE.md](docs/USAGE.md) — рабочие паттерны.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — устройство регулятора.
+- [references/12_AUTONOMOUS_QUOTA_TELEMETRY.md](references/12_AUTONOMOUS_QUOTA_TELEMETRY.md) — контракт автономной telemetry.
+- [references/SOURCE_MAP.md](references/SOURCE_MAP.md) — provenance и времязависимые факты.
+- [SECURITY.md](SECURITY.md) — политика безопасности.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — правила изменений.
 
 ## Важное про квоту
 
-Регулятор не угадывает расход по токенам и не обещает точный burn заранее. Для реального остатка и времени reset источником истины остаются текущий first-party интерфейс OpenAI и данные аккаунта. Внутренняя математика проекта нужна для планирования между подтверждёнными снимками usage.
+Regulator не угадывает расход по токенам и не обещает точный burn заранее. Автоматизация v3.0 меняет способ доставки фактического meter state в control plane, а не превращает приблизительные расчёты в источник истины.
 
 ---
 
 <p align="center">
-  <sub>Текущая версия: <strong>v2.2</strong> · проверено 115 regression-сценариями</sub>
+  <sub>В разработке: <strong>v3.0</strong> · stable: <strong>v2.2</strong> · 135 regression-сценариев</sub>
 </p>
