@@ -1,52 +1,160 @@
 # Architecture
 
-## v2.2 control plane
+## v3.0 ChatGPT-first control plane
+
+`v3.0` сохраняет проверенную математику `v2.2`, но меняет способ доставки quota state в оркестратор.
 
 ```text
 User goal
   ↓
-Regulator on current surface (normally Chat)
+ChatGPT regulator (preferred control plane)
   ↓
 class / surface / gate / WHY_AGENTIC
   ↓
-shared Work/Codex allowance snapshot
-  ↓
-quota epoch + absolute cumulative trajectory
-  ↓
-model/effort + B_SAFE + hard quality/safety gates
-  ↓
-quota risk of launch  ↔  pace risk of defer
-          equal priority (50/50)
-  ↓
-LAUNCH_BASE / LAUNCH_WITH_ADVANCE /
-PROGRESS_ALTERNATIVE / DEFER
-  ↓
-self-contained executor packet
-  ↓
-Work or Codex executes without regulator dependency
-  ↓
-evidence + aggregate usage
-  ↓
-control plane updates project/quota state
+quota-sensitive decision?
+  ├─ no  → continue Chat work
+  └─ yes → automatic quota telemetry
+               ↓
+          normalized Work/Codex snapshot
+               ↓
+          quota epoch + absolute cumulative trajectory
+               ↓
+          model/effort + B_SAFE + hard quality/safety gates
+               ↓
+          quota risk of launch ↔ pace risk of defer
+                  equal priority (50/50)
+               ↓
+          LAUNCH_BASE / LAUNCH_WITH_ADVANCE /
+          PROGRESS_ALTERNATIVE / DEFER
+               ↓
+          self-contained executor packet
+               ↓
+          Work or Codex
+               ↓
+          evidence + post-pass telemetry refresh
 ```
+
+## Product invariants
+
+```text
+CHATGPT_PRIMARY_ORCHESTRATOR=YES
+AUTO_QUOTA_TELEMETRY=DEFAULT
+MANUAL_QUOTA_INPUT=FALLBACK_ONLY
+ZERO_MAINTENANCE_USER_SETUP=REQUIRED
+```
+
+The regulator still supports direct invocation inside Work/Codex, but normal product architecture assumes Chat is the main orchestrator.
+
+## Cloud/local boundary
+
+A cloud/browser ChatGPT session cannot be designed around direct access to a local binary or localhost service.
+
+```text
+CHAT_LOCALHOST_ASSUMPTION=FORBIDDEN
+CHAT_LOCAL_SHELL_ASSUMPTION=FORBIDDEN
+```
+
+Therefore the ChatGPT-primary data path is:
+
+```text
+local quota sensor
+        ↓
+sanitize / normalize
+        ↓
+Chat-accessible connected app/tool
+        ↓
+get_quota_snapshot()
+        ↓
+ChatGPT regulator
+```
+
+The local sensor and transport are implementation details behind one normalized contract. They may change without rewriting the quota controller.
+
+## Telemetry is a sensor, not a controller
+
+```text
+QUOTA_SENSOR=<CODEXBAR|OPENAI_DIRECT|OTHER|UNKNOWN>
+```
+
+The provider supplies facts such as used percentage, reset boundaries and timestamps. It does not decide:
+
+- whether a pass launches;
+- whether future advance is justified;
+- which model/effort is sufficient;
+- how urgent the project is;
+- whether paid credits/reset should be used.
+
+Those decisions remain in the regulator control plane.
+
+## Reference CodexBar adapter
+
+The first adapter accepts CodexBar-compatible structured JSON through `scripts/quota_telemetry.py`.
+
+It intentionally does not authenticate to OpenAI itself, read raw auth files, purchase anything or call Work/Codex.
+
+Window semantics are duration-based:
+
+```text
+RATE_WINDOW_POSITION_IS_NOT_SEMANTICS
+
+300 minutes   → FIVE_HOUR
+10080 minutes → WEEKLY
+other         → OTHER_WINDOW
+```
+
+This prevents `primary`/`secondary` field order from becoming a false invariant.
+
+## Automatic refresh lifecycle
+
+```text
+BEFORE_AGENTIC_PASS
+        ↓
+refresh if quota-sensitive
+        ↓
+admit / alternative / defer
+        ↓
+meaningful Work/Codex pass
+        ↓
+AFTER_MEANINGFUL_AGENTIC_PASS
+        ↓
+updated meter?
+  ├─ yes → observed aggregate burn candidate
+  └─ no  → PENDING_BURN=YES
+```
+
+Additional refresh occurs when snapshot is stale or reset/epoch drift is suspected.
+
+Polling on every Chat message is explicitly unnecessary.
+
+## Manual fallback
+
+Manual quota input remains backwards-compatible but is no longer the normal workflow.
+
+```text
+MANUAL_QUOTA_INPUT_REQUIRED=NO
+MANUAL_QUOTA_INPUT_ACCEPTED=YES
+```
+
+If automatic telemetry is unavailable, the regulator should continue meaningful non-agentic Chat work. It requests a manual first-party snapshot only if an actual quota-sensitive gate cannot be resolved safely without one.
 
 ## Control plane / execution plane separation
 
-v2.2 makes orchestration ownership explicit:
-
 ```text
+ORCHESTRATION_MODE=<CHATGPT_PRIMARY|WORK_STANDALONE|CODEX_STANDALONE>
 CONTROL_PLANE_OWNER=<CHAT|WORK|CODEX>
 HANDOFF_SELF_CONTAINED=YES
 EXECUTOR_SKILL_REQUIRED=NO
 ```
 
-The surface with the regulator resolves quota/model/admission. A downstream executor receives a complete bounded contract and never needs the regulator merely to understand the task.
+A downstream executor receives a complete bounded contract and never needs regulator installation just to understand the task.
 
-Quota trajectory fields are control-plane state and are not copied into ordinary Work/Codex prompts.
+Quota trajectory and telemetry fields are control-plane state and are not copied into ordinary Work/Codex prompts.
 
 ## Absolute weekly trajectory
 
-v2.1 used fixed 24h slices. v2.2 uses one epoch anchor:
+The `v2.2` controller is retained unchanged conceptually.
+
+At one epoch anchor:
 
 ```text
 U0 = weekly used at anchor
@@ -69,7 +177,7 @@ MAX_ADVANCE_HOURS = 72
 MAX_ADVANCE_HEADROOM_PP = T(H-72h) - actual_spend - reservations - meter_buffer
 ```
 
-The 24h quantity is therefore a pacing target, not a hard sleep timer.
+The 24h quantity remains a pacing target, not a hard sleep timer.
 
 ## Balanced admission
 
@@ -97,15 +205,53 @@ PACE_RISK_IF_DEFER = 0..1
 
 Launch with advance when quota risk is no greater than pace risk and the pass remains inside the bounded advance horizon.
 
-This directly fixes the v2.1 failure mode where a pass just above the 24h envelope could force an idle day even while the project critical path was blocked.
+## Reset / epoch handling
+
+Automatic telemetry makes reset detection easier, but the invariant remains strict:
+
+```text
+confirmed reset or material reset-boundary change
+        ↓
+invalidate old trajectory anchor
+        ↓
+new QUOTA_EPOCH_ID
+```
+
+Never combine pre-reset anchor values with post-reset telemetry.
 
 ## Progress-preserving fallback
 
-If full agentic launch loses the balanced comparison, the regulator searches for useful work that does not consume the same shared pool before pure waiting: Chat planning/review/handoff, accepted-evidence reuse, quality-preserving split, independent work or an already-approved non-shared surface.
+If full agentic launch loses the balanced comparison, or automatic telemetry is temporarily unavailable, the regulator searches for useful work that does not consume the same shared pool before pure waiting: Chat planning/review/handoff, accepted-evidence reuse, quality-preserving split, independent work or an already-approved non-shared surface.
 
-## Two runways
+## Standalone modes
 
-Project runway and quota runway remain separate. Failed attempts can preserve project gate count while still consuming aggregate allowance.
+The same normalized quota contract is portable:
+
+```text
+CODEX_STANDALONE
+  local telemetry adapter
+      ↓
+  normalized snapshot
+      ↓
+  controller
+```
+
+```text
+WORK_STANDALONE
+  available connected telemetry tool
+      ↓
+  normalized snapshot
+      ↓
+  controller
+```
+
+Standalone support does not demote ChatGPT from the preferred product architecture.
+
+## Zero-maintenance onboarding boundary
+
+Final v3.0 is not release-ready while ordinary setup requires Terminal, Homebrew, separate CodexBar setup, token copy/paste, manual JSON/YAML, localhost/tunnel configuration or periodic quota messages.
+
+This criterion is architectural, not cosmetic.
 
 ## Model architecture
 
@@ -133,8 +279,12 @@ Quota pressure cannot force a model below minimum sufficient quality.
 - `references/09` — Astra execution.
 - `references/10` — balanced weekly quota + pace controller.
 - `references/11` — orchestration / self-contained handoff.
+- `references/12` — autonomous quota telemetry.
 - `references/SOURCE_MAP.md` — provenance.
 
-## Executable reference
+## Executable references
 
-`scripts/weekly_quota_controller.py` implements the anchored trajectory, burn estimator and balanced admission. Repository validation imports it and runs deterministic self-tests.
+- `scripts/weekly_quota_controller.py` — anchored trajectory, burn estimator and balanced admission.
+- `scripts/quota_telemetry.py` — telemetry normalization and freshness/window classification.
+
+Repository validation imports both and runs deterministic self-tests.
