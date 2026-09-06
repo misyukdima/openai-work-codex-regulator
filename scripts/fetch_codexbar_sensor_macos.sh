@@ -13,7 +13,9 @@ if [[ ! -f "$LOCK" ]]; then
 fi
 
 read_lock() {
-  python3 - "$LOCK" "$1" "$2" <<'PY'
+  local arch="$1"
+  local field="$2"
+  python3 - "$LOCK" "$arch" "$field" <<'PY'
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as fh:
     data = json.load(fh)
@@ -27,8 +29,8 @@ fetch_arch() {
   local archive="$WORK/$arch.tar.gz"
   local url sha actual binary
   mkdir -p "$dir"
-  url="$(read_lock artifacts "$arch" url)"
-  sha="$(read_lock artifacts "$arch" sha256)"
+  url="$(read_lock "$arch" url)"
+  sha="$(read_lock "$arch" sha256)"
 
   curl --fail --location --silent --show-error --retry 3 --retry-delay 2 "$url" --output "$archive"
   actual="$(shasum -a 256 "$archive" | awk '{print $1}')"
