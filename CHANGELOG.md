@@ -1,5 +1,25 @@
 # Changelog
 
+## 3.0 — in development
+
+Major autonomy architecture for ChatGPT-first orchestration.
+
+- Made automatic Work/Codex quota telemetry the default control-plane path: `AUTO_QUOTA_TELEMETRY=DEFAULT`.
+- Changed manual quota snapshots from routine user input to `MANUAL_QUOTA_INPUT=FALLBACK_ONLY`.
+- Kept ChatGPT as the preferred orchestrator with `CHATGPT_PRIMARY_ORCHESTRATOR=YES`, while preserving direct Work/Codex standalone use.
+- Added explicit cloud/local boundary rules: browser/cloud ChatGPT must not assume local shell, local files or `127.0.0.1` access.
+- Added a normalized `get_quota_snapshot()` tool contract so Chat can consume telemetry through a connected app/tool without depending on one local implementation.
+- Added normative `references/12_AUTONOMOUS_QUOTA_TELEMETRY.md` for automatic refresh, freshness, fallback, reset/epoch handling, standalone modes, security and zero-maintenance onboarding.
+- Added `scripts/quota_telemetry.py`, a transport-agnostic CodexBar-compatible normalizer with deterministic self-tests.
+- CodexBar is treated as the first reference sensor, not as an admission controller or mandatory user-facing dependency.
+- Added duration-based rate-window classification so `primary`/`secondary` position is never treated as 5h/weekly semantics.
+- Added freshness states and automatic refresh points before/after meaningful agentic passes, on stale/pending telemetry and suspected resets.
+- Preserved the v2.2 epoch-anchored trajectory, observed-burn estimator, equal quota/pace priority, hard quality floor, 5h breaker and bounded future advance as the mathematical decision engine.
+- Added regression tests 116–135 for ChatGPT-first telemetry, manual fallback, localhost prohibition, connected-tool bridging, window normalization, stale/pending state, reset handling, read-only telemetry, standalone operation and zero-friction onboarding.
+- Upgraded repository validation for v3.0: requires 135 contiguous tests, autonomous telemetry invariants and self-tests, and prevents telemetry-control fields from leaking into ordinary executor packets.
+
+> Development note: the normalized policy/adapter layer is now implemented on the v3 feature branch. The final v3.0 release still requires the zero-friction Chat-accessible companion/app transport before merge/release readiness.
+
 ## 2.2 — 2026-09-06
 
 Balanced quota-and-workflow orchestration release based on real v2.1 field testing.
@@ -82,9 +102,9 @@ Model-tier routing release focused on quota efficiency and explicit model/effort
 
 ## 1.1 — 2026-08-22
 
-Quota-saving routing, security and release-hardening release.
+Quota-saving routing, security and release-hardening release focused on keeping Work/Codex use efficient without weakening safety boundaries.
 
-- Added bounded Chat, `WHY_AGENTIC` / `VALUE_OUTPUT`, surface override, prompt-injection/account/download safety, shared-pool attribution, paid-credit eligibility, capability snapshots, scheduled-task hardening and release automation.
+- Added bounded Chat routing, `WHY_AGENTIC` / `VALUE_OUTPUT`, surface override, prompt-injection/account/download safety, shared-pool attribution, paid-credit eligibility, capability snapshots, scheduled-task hardening and release automation.
 - Added regression tests 37–50.
 
 ## 1.0 — 2026-08-21
