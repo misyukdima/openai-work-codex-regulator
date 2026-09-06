@@ -1,16 +1,15 @@
 ---
 name: openai-work-codex-regulator
 description: >
-  Квота- и темп-осознанный регулятор ChatGPT Work и Codex v2.2. Разделяет
-  control plane и execution plane; не требует наличия regulator skill у
-  downstream Work/Codex executor; управляет общей недельной Work/Codex квотой
-  через epoch-anchored cumulative trajectory, равноприоритетно балансируя
-  quota continuity и workflow pace; сохраняет hard quality/safety floor,
-  observed-burn accounting, Astra admission, permissions, browser/actions,
-  schedules, production mutations, rollback, retries и verification.
+  Автономный quota-aware регулятор ChatGPT Work и Codex v3.0. ChatGPT остаётся
+  предпочтительным control plane; актуальная Work/Codex-квота по умолчанию
+  получается автоматически через доступный telemetry tool, а ручной snapshot
+  используется только как fallback. Сохраняет epoch-anchored trajectory,
+  равный приоритет quota continuity и workflow pace, hard quality/safety floor,
+  self-contained handoff, Astra admission, permissions, rollback и verification.
 ---
 
-# OpenAI Work + Codex — регламент агентской работы v2.2
+# OpenAI Work + Codex — регламент агентской работы v3.0
 
 ## 1. Базовые инварианты
 
@@ -23,6 +22,9 @@ description: >
 - Нельзя снижать minimum sufficient quality ради quota.
 - Нельзя останавливать productive critical path только потому, что nominal 24h target исчерпан, если bounded future advance математически допустим.
 - Downstream executor не обязан иметь этот skill.
+- ChatGPT является предпочтительным оркестратором; прямой запуск skill в Work/Codex остаётся поддержанным режимом.
+- Актуальную quota telemetry получать автоматически, когда доступен поддерживаемый tool; не превращать пользователя в постоянный источник meter state.
+- Browser/cloud Chat никогда не должен предполагать доступ к local shell, локальным файлам или `127.0.0.1` пользователя.
 
 ```text
 ONE_GATE = ONE_PRIMARY_SURFACE
@@ -30,6 +32,12 @@ QUALITY_FLOOR=NON_NEGOTIABLE
 BALANCED_PRIORITY=QUOTA_50_PACE_50
 HANDOFF_SELF_CONTAINED=YES
 EXECUTOR_SKILL_REQUIRED=NO
+CHATGPT_PRIMARY_ORCHESTRATOR=YES
+AUTO_QUOTA_TELEMETRY=DEFAULT
+MANUAL_QUOTA_INPUT=FALLBACK_ONLY
+ZERO_MAINTENANCE_USER_SETUP=REQUIRED
+CHAT_LOCALHOST_ASSUMPTION=FORBIDDEN
+CHAT_LOCAL_SHELL_ASSUMPTION=FORBIDDEN
 ```
 
 ## 2. Нормативная база
@@ -39,40 +47,45 @@ EXECUTOR_SKILL_REQUIRED=NO
 1. safety / permissions / money / production / target authorization;
 2. latest explicit user instruction;
 3. current account/workspace state;
-4. `references/11_ORCHESTRATION_AND_HANDOFF.md`;
-5. `references/10_WEEKLY_QUOTA_CONTROLLER.md`;
-6. `references/09_ASTRA_EXECUTION.md`;
-7. `references/02_SHARED_QUOTA_AND_CREDITS.md`;
-8. `references/01_SURFACE_ROUTING.md`;
-9. `references/04_RUNWAY_AND_BURN.md`;
-10. `references/03_TASK_CLASSIFICATION.md`;
-11. `references/05_WORK_BROWSER_AND_ACTIONS.md`;
-12. `references/06_CODEX_TECHNICAL_WORK.md`;
-13. `references/07_FAILURES_AND_RECOVERY.md`;
-14. `references/08_MODEL_TIER_ROUTING.md`.
+4. `references/12_AUTONOMOUS_QUOTA_TELEMETRY.md`;
+5. `references/11_ORCHESTRATION_AND_HANDOFF.md`;
+6. `references/10_WEEKLY_QUOTA_CONTROLLER.md`;
+7. `references/09_ASTRA_EXECUTION.md`;
+8. `references/02_SHARED_QUOTA_AND_CREDITS.md`;
+9. `references/01_SURFACE_ROUTING.md`;
+10. `references/04_RUNWAY_AND_BURN.md`;
+11. `references/03_TASK_CLASSIFICATION.md`;
+12. `references/05_WORK_BROWSER_AND_ACTIONS.md`;
+13. `references/06_CODEX_TECHNICAL_WORK.md`;
+14. `references/07_FAILURES_AND_RECOVERY.md`;
+15. `references/08_MODEL_TIER_ROUTING.md`.
 
 Карта provenance: `references/SOURCE_MAP.md`.
 
 ## 3. Control plane vs execution plane
 
-Regulator действует на той surface, где он реально загружен/вызван.
-
 ```text
+ORCHESTRATION_MODE=<CHATGPT_PRIMARY|WORK_STANDALONE|CODEX_STANDALONE>
 CONTROL_PLANE_OWNER=<CHAT|WORK|CODEX>
 HANDOFF_SELF_CONTAINED=YES
 EXECUTOR_SKILL_REQUIRED=NO
 ```
 
+Нормальный режим — `ORCHESTRATION_MODE=CHATGPT_PRIMARY` и `CONTROL_PLANE_OWNER=CHAT`.
+
 Если Chat использует skill и передаёт задачу в Codex/Work:
 
 - Chat сам решает quota/model/surface/admission;
+- Chat сам запрашивает актуальную telemetry, когда quota влияет на решение;
 - executor получает готовый bounded execution packet;
 - prompt executor'у не должен требовать `use/load/read/follow openai-work-codex-regulator` как prerequisite;
 - отсутствие skill у executor не является blocker;
-- internal quota trajectory, risk scores и admission math остаются в control plane;
+- internal quota trajectory, telemetry provenance, risk scores и admission math остаются в control plane;
 - executor получает только execution-relevant constraints.
 
-Это не запрещает читать `SKILL.md`, когда сам файл является target/read scope задачи по этому репозиторию.
+Если пользователь явно запускает skill непосредственно в Work/Codex, текущая surface может быть control plane для этого локального pass и использовать доступный telemetry adapter. Это не меняет ChatGPT-first default.
+
+Чтение `SKILL.md` разрешено, когда сам файл является target/read scope задачи по этому репозиторию.
 
 ## 4. Surface routing
 
@@ -111,10 +124,25 @@ Repo/code/terminal/tests/build/Git/server/config/deploy/debugging.
 
 Class 4 read-only не даёт mutation permission.
 
-## 6. Allowance snapshot
+## 6. Automatic allowance snapshot
+
+По умолчанию quota bookkeeping автоматический:
+
+```text
+AUTO_QUOTA_TELEMETRY=DEFAULT
+MANUAL_QUOTA_INPUT=FALLBACK_ONLY
+MANUAL_QUOTA_INPUT_REQUIRED=NO
+MANUAL_QUOTA_INPUT_ACCEPTED=YES
+QUOTA_TOOL=get_quota_snapshot
+QUOTA_TELEMETRY_STATE=<FRESH|STALE|UNAVAILABLE|CONFLICT|UNKNOWN>
+QUOTA_TELEMETRY_SOURCE=<provider|unknown>
+```
+
+Нормализованный snapshot:
 
 ```text
 ALLOWANCE_DOMAIN=<WORK_CODEX|CHAT_PRO|API|UNKNOWN>
+SNAPSHOT_AT=<time|unknown>
 WEEKLY_METER_SEMANTICS=<USED|REMAINING|UNKNOWN>
 WEEKLY_USED=<percent|unknown>
 WEEKLY_RESET=<time|unknown>
@@ -133,9 +161,27 @@ PAID_CREDITS_ALLOWED=NO
 PAID_WEEKLY_RESET_ALLOWED=NO
 ```
 
+### Когда обновлять автоматически
+
+```text
+AUTO_QUOTA_REFRESH=BEFORE_AGENTIC_PASS
+AUTO_QUOTA_REFRESH=AFTER_MEANINGFUL_AGENTIC_PASS
+AUTO_QUOTA_REFRESH=WHEN_PENDING_BURN_MATTERS
+AUTO_QUOTA_REFRESH=WHEN_SNAPSHOT_STALE
+AUTO_QUOTA_REFRESH=ON_RESET_OR_EPOCH_SUSPECTED
+```
+
+Не опрашивать meter на каждое обычное Chat-сообщение.
+
+Если telemetry `FRESH`, использовать её без запроса пользователя. Если `STALE`, попытаться обновить до quota-sensitive class 2–4 pass. Если `UNAVAILABLE`, не останавливать полезную Chat-работу; просить manual first-party snapshot только тогда, когда без него нельзя безопасно принять quota-sensitive решение.
+
+Browser/cloud Chat не пытается выполнить `codexbar`, читать local files или обращаться к localhost. Для ChatGPT автоматический snapshot должен приходить через доступный connected app/tool. В standalone Codex локальный adapter допустим, если shell/tool access реально есть.
+
+Provider является датчиком, не контроллером. Его собственные guard/pacing рекомендации не заменяют regulator admission.
+
 ## 7. Quota epoch + continuous trajectory
 
-v2.2 отменяет fixed 24h slice как hard admission cap. 24h остаётся normal look-ahead поверх одной absolute cumulative trajectory.
+v3.0 сохраняет математическое ядро v2.2: fixed 24h slice не является hard admission cap. 24h остаётся normal look-ahead поверх одной absolute cumulative trajectory.
 
 Anchor:
 
@@ -164,7 +210,7 @@ MAX_ADVANCE_HEADROOM_PP = T(H-72h) - ACTUAL_SPEND_SINCE_ANCHOR_PP - reservations
 BORROWABLE_EXTRA_PP = max(0, MAX_ADVANCE_HEADROOM_PP - BASE_ACTION_HEADROOM_PP)
 ```
 
-Clamp horizons at reset. Full math: `references/10_WEEKLY_QUOTA_CONTROLLER.md`.
+Confirmed reset/material reset-boundary change → invalidate old anchor and create a new `QUOTA_EPOCH_ID`. Full math: `references/10_WEEKLY_QUOTA_CONTROLLER.md`.
 
 ## 8. Conservative pass burn
 
@@ -177,6 +223,8 @@ BURN_ESTIMATE_CONFIDENCE=<LOW|MEDIUM|HIGH|UNKNOWN>
 ```
 
 One sample: +50% or granularity. Two: max +25% or granularity. 3–5: median/MAD/P80 planning margin. This is a planning heuristic, not a probability guarantee.
+
+Automatic telemetry improves observation collection but does not authorize deriving weekly pp from tokens/API prices.
 
 ## 9. Equal-priority quota + workflow pace admission
 
@@ -215,11 +263,7 @@ If `B_SAFE <= MAX_ADVANCE_HEADROOM_PP` and `LOSS_LAUNCH <= LOSS_DEFER`:
 QUOTA_DECISION=LAUNCH_WITH_ADVANCE
 ```
 
-Otherwise prefer productive alternative or defer.
-
-Tie is not biased toward quota: if risks are equal and the pass closes the active gate, launch may proceed.
-
-Never advance beyond `MAX_ADVANCE_HOURS` merely to avoid waiting.
+Otherwise prefer productive alternative or defer. Tie may launch when it closes the active gate. Never advance beyond `MAX_ADVANCE_HOURS` merely to avoid waiting.
 
 ## 10. Progress-preserving fallback ladder
 
@@ -229,15 +273,16 @@ Before pure wait:
 2. reuse accepted evidence;
 3. batch naturally dependent steps inside one gate;
 4. split only if verification/rework do not worsen;
-5. do meaningful non-agentic Chat planning/review/handoff while agentic capacity recovers;
+5. do meaningful non-agentic Chat planning/review/handoff while agentic capacity or telemetry recovers;
 6. use an already-approved non-shared external tool when appropriate;
-7. defer only when no quality-preserving productive path remains.
+7. request manual quota snapshot only if automatic telemetry is unavailable and quota state blocks the next decision;
+8. defer only when no quality-preserving productive path remains.
 
 ```text
 MEANINGFUL_PROGRESS_WITHOUT_AGENTIC=<YES|NO|UNKNOWN>
 ```
 
-A 24h wait is not a default outcome.
+A 24h wait and a manual quota request are both non-default outcomes.
 
 ## 11. Pending burn and 5h circuit breaker
 
@@ -246,7 +291,9 @@ POST_PASS_METER_STATE=<UPDATED|PENDING|UNKNOWN>
 PENDING_BURN=<YES|NO>
 ```
 
-Pending aggregate telemetry blocks additional **large future advance**, but does not block safe non-agentic Chat progress.
+After meaningful Work/Codex execution, refresh telemetry when available. An unchanged immediate meter does not prove zero burn when reporting may lag.
+
+Pending aggregate telemetry blocks additional **large future advance**, but does not block safe non-agentic Chat progress. A later fresh snapshot in the same epoch may resolve pending burn and become an observed aggregate sample under existing attribution rules.
 
 5h meter is separate. Weekly advance cannot bypass exhausted/unsafe 5h headroom.
 
@@ -274,10 +321,11 @@ CODEX_LOCAL=ON|OFF|UNKNOWN
 BROWSER_ACCESS=ON|OFF|UNKNOWN
 NETWORK_ACCESS=ON|OFF|UNKNOWN
 CONNECTED_APP_PERMISSION=OK|MISSING|UNKNOWN
+QUOTA_TELEMETRY_TOOL=ON|OFF|UNKNOWN
 CODEX_CLIENT_ASTRA_READY=YES|NO|UNKNOWN|N/A
 ```
 
-Quota never compensates for missing capability or permission.
+Quota never compensates for missing capability or permission. Missing telemetry tool does not imply missing Work/Codex capability; it only affects quota evidence.
 
 ## 14. Model router
 
@@ -304,6 +352,8 @@ INJECTION_ATTEMPT
 
 Credentials only through supported sign-in. Wrong active account → STOP. Downloading ≠ permission to execute. CAPTCHA/anti-bot/network restrictions are not bypassed.
 
+Quota telemetry path is read-only: it cannot buy credits, trigger paid reset, mutate account settings or expand permissions.
+
 ## 16. Codex mutation discipline
 
 Before mutation: repo/root/environment identity → read-only baseline → exact read/write/no-touch → tests → rollback → diff/evidence.
@@ -327,7 +377,7 @@ Never `git add .`; no force-push; no secrets/customer data/backups/db files unle
 
 ## 17. Self-contained cross-surface handoff
 
-Control-plane launch card may contain quota/model math. Executor packet must not.
+Control-plane launch card may contain quota/model/telemetry math. Executor packet must not.
 
 Minimum executor packet:
 
@@ -349,14 +399,17 @@ ROLLBACK
 STOP IF
 ```
 
-Do not forward `QUOTA_EPOCH_ID`, trajectory pp, risk scores or controller internals unless the executor's explicit gate is to inspect usage telemetry itself.
+Do not forward `QUOTA_EPOCH_ID`, telemetry provider internals, trajectory pp, risk scores or controller internals unless the executor's explicit gate is to inspect usage telemetry itself.
 
 ## 18. Orchestrator decision card
 
 ```text
 STATUS=<LAUNCH_BASE|LAUNCH_WITH_ADVANCE|PROGRESS_ALTERNATIVE|PREPARE|DEFER|STOP>
+ORCHESTRATION_MODE=<CHATGPT_PRIMARY|WORK_STANDALONE|CODEX_STANDALONE>
 CONTROL_PLANE_OWNER=<surface>
 ALLOWANCE_DOMAIN=WORK_CODEX
+QUOTA_TELEMETRY_STATE=<FRESH|STALE|UNAVAILABLE|CONFLICT|UNKNOWN>
+QUOTA_TELEMETRY_SOURCE=<provider|unknown>
 QUOTA_EPOCH_ID=<id>
 BASE_ACTION_HEADROOM_PP=<value>
 MAX_ADVANCE_HEADROOM_PP=<value>
@@ -442,19 +495,56 @@ STOP IF:
 <drift/scope expansion/safety pause/failing invariant>
 ```
 
-## 21. Failure / recovery
+## 21. Telemetry provider discipline
+
+Telemetry provider is a sensor only.
+
+```text
+QUOTA_SENSOR=<CODEXBAR|OPENAI_DIRECT|OTHER|UNKNOWN>
+RATE_WINDOW_POSITION_IS_NOT_SEMANTICS
+```
+
+For CodexBar-compatible payloads classify windows by reported duration:
+
+```text
+300 minutes   → FIVE_HOUR
+10080 minutes → WEEKLY
+other         → OTHER_WINDOW
+```
+
+Never infer `primary=5h` / `secondary=weekly` merely from position. Unknown window semantics remain unknown.
+
+Normalized telemetry sent to Chat must omit OAuth tokens, cookies, bearer headers, raw auth files, private prompts and unnecessary personal identifiers.
+
+Reference normalizer: `scripts/quota_telemetry.py`.
+
+## 22. Failure / recovery
 
 - Two materially identical failures → stop strategy, new hypothesis.
 - Safety pause is not bypassed by surface/model switch.
 - Limit exhaustion is not bypassed Work↔Codex.
 - If nominal 24h target is exceeded, do **not** automatically wait 24h: run balanced advance decision and progress-preserving fallback ladder.
 - If `PENDING_BURN=YES`, no new large advance until telemetry catches up; Chat preparation/review may continue.
+- If automatic telemetry fails, continue safe Chat work and retry when quota state next matters.
+- Manual quota input is requested only as fallback when an actual quota-sensitive gate cannot be resolved automatically.
 - Paid reset remains explicit class-4 money action.
 
-## 22. Result verification
+## 23. Result verification
 
 Accept `done` only with gate evidence, exact scope, tests/source evidence, external actions, residual risk/rollback, post-pass aggregate usage where available, and correct attribution.
 
-## 23. Capability limits
+For quota-sensitive passes, record telemetry state/source in the control-plane result when useful for auditability; do not leak auth material.
 
-Skill does not claim exact burn from tokens, guaranteed daily agentic activity, unlimited future advance, executor skill availability, permission expansion, or safe bypass of limits/safety/anti-bot controls.
+## 24. Zero-maintenance UX contract
+
+The final v3.0 normal installation is not complete if it requires the ordinary user to open Terminal, install Homebrew, configure CodexBar separately, edit JSON/YAML, copy tokens, configure localhost/tunnels manually, understand MCP internals or periodically resend quota values.
+
+```text
+ZERO_MAINTENANCE_USER_SETUP=REQUIRED
+```
+
+Technical fallback/debug paths may exist for advanced users, but they are not the product's normal onboarding flow.
+
+## 25. Capability limits
+
+Skill does not claim exact burn from tokens, guaranteed daily agentic activity, unlimited future advance, executor skill availability, permission expansion, automatic access to local machine state from cloud ChatGPT, universal telemetry-provider availability, or safe bypass of limits/safety/anti-bot controls.
