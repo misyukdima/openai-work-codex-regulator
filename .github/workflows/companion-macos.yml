@@ -1,0 +1,55 @@
+name: Build macOS Companion
+
+on:
+  push:
+    branches:
+      - feat/v3-autonomous-quota-telemetry
+    paths:
+      - 'companion/macos/**'
+      - 'scripts/package_macos_companion.sh'
+      - 'VERSION'
+      - '.github/workflows/companion-macos.yml'
+  pull_request:
+    paths:
+      - 'companion/macos/**'
+      - 'scripts/package_macos_companion.sh'
+      - 'VERSION'
+      - '.github/workflows/companion-macos.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Swift toolchain
+        run: swift --version
+
+      - name: Build Swift package
+        run: swift build -c release --package-path companion/macos
+
+      - name: Package development app
+        env:
+          REGULATOR_BUILD_NUMBER: ${{ github.run_number }}
+        run: bash scripts/package_macos_companion.sh
+
+      - name: Inspect app bundle
+        run: |
+          APP='dist/OpenAI Work + Codex Regulator.app'
+          test -x "$APP/Contents/MacOS/RegulatorCompanion"
+          plutil -lint "$APP/Contents/Info.plist"
+          codesign --verify --deep --strict "$APP"
+          file "$APP/Contents/MacOS/RegulatorCompanion"
+
+      - name: Upload development artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: regulator-companion-macos-dev
+          path: dist/openai-work-codex-regulator-companion-v3.0-macos.zip
+          if-no-files-found: error
+          retention-days: 14
