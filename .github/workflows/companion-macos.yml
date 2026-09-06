@@ -6,13 +6,19 @@ on:
       - feat/v3-autonomous-quota-telemetry
     paths:
       - 'companion/macos/**'
+      - 'companion/sensors/**'
       - 'scripts/package_macos_companion.sh'
+      - 'scripts/fetch_codexbar_sensor_macos.sh'
+      - 'THIRD_PARTY_NOTICES.md'
       - 'VERSION'
       - '.github/workflows/companion-macos.yml'
   pull_request:
     paths:
       - 'companion/macos/**'
+      - 'companion/sensors/**'
       - 'scripts/package_macos_companion.sh'
+      - 'scripts/fetch_codexbar_sensor_macos.sh'
+      - 'THIRD_PARTY_NOTICES.md'
       - 'VERSION'
       - '.github/workflows/companion-macos.yml'
   workflow_dispatch:
@@ -30,21 +36,30 @@ jobs:
       - name: Show Swift toolchain
         run: swift --version
 
-      - name: Build Swift package
-        run: swift build -c release --package-path companion/macos
+      - name: Build universal Swift package
+        run: swift build -c release --arch arm64 --arch x86_64 --package-path companion/macos
+
+      - name: Fetch pinned universal quota sensor
+        run: bash scripts/fetch_codexbar_sensor_macos.sh dist/CodexBarCLI
 
       - name: Package development app
         env:
           REGULATOR_BUILD_NUMBER: ${{ github.run_number }}
+          REGULATOR_CODEXBAR_HELPER_PATH: ${{ github.workspace }}/dist/CodexBarCLI
         run: bash scripts/package_macos_companion.sh
 
       - name: Inspect app bundle
         run: |
           APP='dist/OpenAI Work + Codex Regulator.app'
           test -x "$APP/Contents/MacOS/RegulatorCompanion"
+          test -x "$APP/Contents/MacOS/CodexBarCLI"
+          test -f "$APP/Contents/Resources/THIRD_PARTY_NOTICES.md"
           plutil -lint "$APP/Contents/Info.plist"
           codesign --verify --deep --strict "$APP"
+          test "$(lipo -archs "$APP/Contents/MacOS/RegulatorCompanion")" = 'x86_64 arm64' -o "$(lipo -archs "$APP/Contents/MacOS/RegulatorCompanion")" = 'arm64 x86_64'
+          test "$(lipo -archs "$APP/Contents/MacOS/CodexBarCLI")" = 'x86_64 arm64' -o "$(lipo -archs "$APP/Contents/MacOS/CodexBarCLI")" = 'arm64 x86_64'
           file "$APP/Contents/MacOS/RegulatorCompanion"
+          file "$APP/Contents/MacOS/CodexBarCLI"
 
       - name: Upload development artifact
         uses: actions/upload-artifact@v4
