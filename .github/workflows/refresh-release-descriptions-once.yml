@@ -22,7 +22,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = "refs/heads/main"
-          for tag in v1.0 v1.1 v1.2 v2.0 v2.1 v2.2; do
+          for tag in v1.1 v1.2 v2.0 v2.1 v2.2; do
             gh release view "$tag" >/dev/null
           done
 
@@ -30,33 +30,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          cat > /tmp/v1.0.md <<'EOF'
-          # v1.0 - Основа регулятора
-
-          Первый рабочий релиз `openai-work-codex-regulator`. Здесь появилась базовая схема, на которой строятся все следующие версии: Chat отвечает за оркестрацию, Work берёт браузерные и многошаговые задачи, Codex работает с кодом и технической средой.
-
-          > Архивная версия. Для новой установки используйте [v2.2](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.2).
-
-          ## Что появилось
-
-          - маршрутизация между Chat, Work и Codex;
-          - единая логика shared agentic pool для Work/Codex;
-          - quota snapshot перед тяжёлыми проходами;
-          - project runway и дисциплина одного gate на один substantive pass;
-          - классы риска `0-4`;
-          - базовые правила для Work/browser и Codex;
-          - recovery после неудачных попыток;
-          - карта официальных OpenAI-источников.
-
-          ## Зачем был нужен v1.0
-
-          До этой версии не было общего контракта, который связывал выбор surface, расход квоты, риск задачи и проверку результата. `v1.0` зафиксировал этот каркас и сделал дальнейшие изменения проверяемыми, а не набором разрозненных промптов.
-
-          ## Установка
-
-          Скачайте артефакт нужной версии в блоке **Assets** ниже и используйте `SKILL.md` как entry point.
-          EOF
 
           cat > /tmp/v1.1.md <<'EOF'
           # v1.1 - Квота и безопасность
@@ -217,7 +190,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release edit v1.0 --title "v1.0 - Основа регулятора" --notes-file /tmp/v1.0.md
           gh release edit v1.1 --title "v1.1 - Квота и безопасность" --notes-file /tmp/v1.1.md
           gh release edit v1.2 --title "v1.2 - Маршрутизация моделей" --notes-file /tmp/v1.2.md
           gh release edit v2.0 --title "v2.0 - Архитектура Astra" --notes-file /tmp/v2.0.md
@@ -230,14 +202,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(gh release view v1.0 --json name --jq .name)" = "v1.0 - Основа регулятора"
           test "$(gh release view v1.1 --json name --jq .name)" = "v1.1 - Квота и безопасность"
           test "$(gh release view v1.2 --json name --jq .name)" = "v1.2 - Маршрутизация моделей"
           test "$(gh release view v2.0 --json name --jq .name)" = "v2.0 - Архитектура Astra"
           test "$(gh release view v2.1 --json name --jq .name)" = "v2.1 - Адаптивный недельный контроллер"
           test "$(gh release view v2.2 --json name --jq .name)" = "v2.2 - Баланс квоты и рабочего темпа"
 
-          gh release view v1.0 --json body --jq .body | grep -Fq "## Что появилось"
           gh release view v1.1 --json body --jq .body | grep -Fq "## Главное"
           gh release view v1.2 --json body --jq .body | grep -Fq "## Почему это важно"
           gh release view v2.0 --json body --jq .body | grep -Fq "## Что поменялось в логике"
