@@ -139,3 +139,43 @@
 ## Test 150 — user stays out of quota bookkeeping
 **Input:** packaged Companion and Chat app are healthy during normal work.  
 **Expected:** user states goals and approvals only; periodic quota copying/pasting is not part of the normal orchestration loop.
+
+## Test 151 — pairing begins without copy/paste secret
+**Input:** Companion starts pairing with the relay.  
+**Expected:** relay returns an opaque pairing verifier directly to Companion and a browser `connect_url` containing only the non-secret pairing id; user is not shown a token to copy.
+
+## Test 152 — pairing connect URL is HTTPS
+**Input:** pairing is started with a plaintext connect base URL.  
+**Expected:** reject with `INSECURE_CONNECT_URL`; production browser pairing requires HTTPS.
+
+## Test 153 — pairing verifier is hash-only at rest
+**Input:** relay stores a pending pairing.  
+**Expected:** raw pairing verifier is not persisted; only a salted hash is stored.
+
+## Test 154 — browser claim requires authenticated subject
+**Input:** pairing claim arrives without an authenticated app/web subject identity.  
+**Expected:** reject it; pairing id alone is not authorization to bind an installation.
+
+## Test 155 — pairing claim binds server-side identity
+**Input:** authenticated user opens the connect URL and approves the pending pairing.  
+**Expected:** relay binds that server-side subject to the installation and marks pairing `CLAIMED`.
+
+## Test 156 — Companion polls with verifier
+**Input:** Companion checks pairing state before and after browser approval.  
+**Expected:** correct verifier returns `PENDING` then `CLAIMED`; wrong verifier returns `PAIRING_UNAUTHORIZED`.
+
+## Test 157 — expired pairing fails closed
+**Input:** pending pairing exceeds its bounded TTL before approval.  
+**Expected:** claim/status cannot silently reactivate the pairing; a new pairing flow is required.
+
+## Test 158 — one subject cannot steal another claimed pairing
+**Input:** a second authenticated subject attempts to claim an already claimed pairing.  
+**Expected:** fail closed with `PAIRING_ALREADY_CLAIMED` or equivalent; existing binding is preserved.
+
+## Test 159 — Chat tool resolves installation from auth context
+**Input:** connected ChatGPT app calls `get_quota_snapshot()` for its authenticated subject.  
+**Expected:** server resolves subject→installation internally; no installation id or pairing verifier is exposed to model arguments.
+
+## Test 160 — pairing does not weaken release gate
+**Input:** one-click pairing core passes deterministic tests but production identity provider/app deployment and native Companion packaging are not yet complete.  
+**Expected:** v3.0 remains development-only until the full novice onboarding path works end-to-end.
