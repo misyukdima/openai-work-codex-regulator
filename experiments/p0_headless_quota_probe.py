@@ -2,15 +2,15 @@
 """P0 feasibility probe for server-side Codex quota telemetry.
 
 Purpose:
-- launch an official `codex app-server --stdio` process in an isolated CODEX_HOME;
+- launch official `codex app-server --stdio` in an isolated CODEX_HOME;
 - initialize JSON-RPC;
 - start ChatGPT device-code login;
-- emit ONLY verification URL + one-time user code for interactive authorization;
+- emit only verification URL + one-time user code;
 - after `account/login/completed`, call `account/rateLimits/read`;
-- print a sanitized JSON quota snapshot;
+- emit a sanitized quota snapshot;
 - never print or persist auth tokens.
 
-This is an EXPERIMENTAL DEVELOPMENT HARNESS. It is not production Plugin code.
+This is an EXPERIMENTAL DEVELOPMENT HARNESS, not production Plugin code.
 """
 
 from __future__ import annotations
@@ -39,11 +39,8 @@ def recv(proc: subprocess.Popen[str], timeout: float = 120.0) -> dict[str, Any]:
                 raise RuntimeError(f"codex app-server exited with code {proc.returncode}")
             time.sleep(0.05)
             continue
-        line = line.strip()
-        if not line:
-            continue
         try:
-            return json.loads(line)
+            return json.loads(line.strip())
         except json.JSONDecodeError:
             continue
     raise TimeoutError("timed out waiting for codex app-server response")
@@ -71,81 +68,64 @@ def wait_login_completed(proc: subprocess.Popen[str], login_id: str, timeout: fl
     raise TimeoutError("device-code login timed out")
 
 
-def gha_escape(value: str) -> str:
-    return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-
-
-def emit_device_auth(verification_url: str, user_code: str) -> None:
-    print("P0_DEVICE_AUTH_REQUIRED", flush=True)
-    print(f"VERIFICATION_URL={verification_url}", flush=True)
-    print(f"USER_CODE={user_code}", flush=True)
-    if os.environ.get("GITHUB_ACTIONS") == "true":
-        message = gha_escape(f"Open {verification_url} and enter code {user_code}")
-        print(f"::notice title=P0 Device Auth::{message}", flush=True)
+def atomic_write_json(path: str | None, payload: dict[str, Any]) -> None:
+    if not path:
+        return
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp = target.with_suffix(target.suffix + ".tmp")
+    temp.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    temp.replace(target)
 
 
 def sanitize_rate_limits(result: dict[str, Any]) -> dict[str, Any]:
-    """Keep only quota telemetry fields; omit account identifiers and opaque backend metadata."""
-
     def clean_snapshot(snapshot: Any) -> Any:
         if not isinstance(snapshot, dict):
             return snapshot
-        allowed = {
-            "primary",
-            "secondary",
-            "credits",
-            "limitId",
-            "limitName",
-            "planType",
-            "rateLimitReachedType",
-        }
         out: dict[str, Any] = {}
-        for key, value in snapshot.items():
-            if key not in allowed:
-                continue
-            if key in {"primary", "secondary"} and isinstance(value, dict):
+        for key in ("limitId", "limitName", "planType", "rateLimitReachedType"):
+            if key in snapshot:
+                out[key] = snapshot[key]
+        for key in ("primary", "secondary"):
+            value = snapshot.get(key)
+            if isinstance(value, dict):
                 out[key] = {
                     k: value[k]
                     for k in ("usedPercent", "windowDurationMins", "resetsAt")
                     if k in value
                 }
-            elif key == "credits" and isinstance(value, dict):
-                out[key] = {
-                    k: value[k]
-                    for k in ("hasCredits", "unlimited", "balance")
-                    if k in value
-                }
-            else:
-                out[key] = value
+        credits = snapshot.get("credits")
+        if isinstance(credits, dict):
+            out["credits"] = {
+                k: credits[k]
+                for k in ("hasCredits", "unlimited", "balance")
+                if k in credits
+            }
         return out
 
     output: dict[str, Any] = {
         "ordinaryUsageAllowed": result.get("ordinaryUsageAllowed"),
         "capturedAt": int(time.time()),
     }
-
     if isinstance(result.get("rateLimits"), dict):
         output["rateLimits"] = clean_snapshot(result["rateLimits"])
-
     by_id = result.get("rateLimitsByLimitId")
     if isinstance(by_id, dict):
         output["rateLimitsByLimitId"] = {
             str(limit_id): clean_snapshot(snapshot)
             for limit_id, snapshot in by_id.items()
         }
-
     reset_credits = result.get("rateLimitResetCredits")
     if isinstance(reset_credits, dict):
-        output["rateLimitResetCredits"] = {
-            "availableCount": reset_credits.get("availableCount")
-        }
-
+        output["rateLimitResetCredits"] = {"availableCount": reset_credits.get("availableCount")}
     return output
 
 
 def main() -> int:
     codex_bin = os.environ.get("CODEX_BIN", "codex")
     codex_home = Path(os.environ.get("CODEX_HOME", ".p0-codex-home")).resolve()
+    auth_file = os.environ.get("P0_AUTH_FILE")
+    quota_file = os.environ.get("P0_QUOTA_FILE")
     codex_home.mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
@@ -155,44 +135,35 @@ def main() -> int:
         [codex_bin, "app-server", "--stdio"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
         text=True,
         bufsize=1,
         env=env,
     )
 
     try:
-        send(
-            proc,
-            {
-                "method": "initialize",
-                "id": 1,
-                "params": {
-                    "clientInfo": {
-                        "name": "openai_work_codex_regulator_p0",
-                        "title": "OpenAI Work + Codex Regulator P0 Probe",
-                        "version": "0.1.0",
-                    }
-                },
-            },
-        )
+        send(proc, {
+            "method": "initialize",
+            "id": 1,
+            "params": {"clientInfo": {
+                "name": "openai_work_codex_regulator_p0",
+                "title": "OpenAI Work + Codex Regulator P0 Probe",
+                "version": "0.1.0",
+            }},
+        })
         init = wait_for_id(proc, 1, 30.0)
         if "error" in init:
             raise RuntimeError(f"initialize failed: {init['error']}")
         send(proc, {"method": "initialized", "params": {}})
 
-        send(
-            proc,
-            {
-                "method": "account/login/start",
-                "id": 2,
-                "params": {"type": "chatgptDeviceCode"},
-            },
-        )
+        send(proc, {
+            "method": "account/login/start",
+            "id": 2,
+            "params": {"type": "chatgptDeviceCode"},
+        })
         login = wait_for_id(proc, 2, 60.0)
         if "error" in login:
             raise RuntimeError(f"login start failed: {login['error']}")
-
         result = login.get("result") or {}
         if result.get("type") != "chatgptDeviceCode":
             raise RuntimeError(f"unexpected login response: {result}")
@@ -200,7 +171,9 @@ def main() -> int:
         login_id = str(result["loginId"])
         verification_url = str(result["verificationUrl"])
         user_code = str(result["userCode"])
-        emit_device_auth(verification_url, user_code)
+        auth_payload = {"verificationUrl": verification_url, "userCode": user_code}
+        atomic_write_json(auth_file, auth_payload)
+        print("P0_DEVICE_AUTH_READY", flush=True)
 
         completed = wait_login_completed(proc, login_id, 300.0)
         if not completed.get("success"):
@@ -212,7 +185,8 @@ def main() -> int:
             raise RuntimeError(f"rate limit read failed: {rate['error']}")
 
         sanitized = sanitize_rate_limits(rate.get("result") or {})
-        print("P0_QUOTA_SNAPSHOT=" + json.dumps(sanitized, ensure_ascii=False, sort_keys=True), flush=True)
+        atomic_write_json(quota_file, sanitized)
+        print("P0_QUOTA_READY", flush=True)
         return 0
     finally:
         try:
