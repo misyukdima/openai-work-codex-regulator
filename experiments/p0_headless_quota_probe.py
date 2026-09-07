@@ -6,7 +6,8 @@ Purpose:
 - initialize JSON-RPC;
 - start ChatGPT device-code login;
 - emit only verification URL + one-time user code;
-- after `account/login/completed`, call `account/rateLimits/read`;
+- after `account/login/completed`, wait for `account/updated` so managed auth is active;
+- call `account/rateLimits/read`;
 - emit a sanitized quota snapshot;
 - never print or persist auth tokens.
 
@@ -66,6 +67,25 @@ def wait_login_completed(proc: subprocess.Popen[str], login_id: str, timeout: fl
             continue
         return params
     raise TimeoutError("device-code login timed out")
+
+
+def wait_account_updated(proc: subprocess.Popen[str], timeout: float = 30.0) -> dict[str, Any]:
+    """Wait until app-server has reloaded the newly persisted managed auth.
+
+    Codex emits account/login/completed before auth_manager.reload() and emits
+    account/updated after the reload. Reading rate limits on the first event can
+    therefore race and return "authentication required" even after a successful
+    user authorization.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        msg = recv(proc, timeout=max(1.0, deadline - time.monotonic()))
+        if msg.get("method") != "account/updated":
+            continue
+        params = msg.get("params") or {}
+        if params.get("authMode") is not None:
+            return params
+    raise TimeoutError("timed out waiting for authenticated account/updated notification")
 
 
 def atomic_write_json(path: str | None, payload: dict[str, Any]) -> None:
@@ -148,7 +168,7 @@ def main() -> int:
             "params": {"clientInfo": {
                 "name": "openai_work_codex_regulator_p0",
                 "title": "OpenAI Work + Codex Regulator P0 Probe",
-                "version": "0.1.0",
+                "version": "0.1.1",
             }},
         })
         init = wait_for_id(proc, 1, 30.0)
@@ -178,6 +198,8 @@ def main() -> int:
         completed = wait_login_completed(proc, login_id, 300.0)
         if not completed.get("success"):
             raise RuntimeError(f"login failed: {completed.get('error') or 'unknown error'}")
+
+        wait_account_updated(proc, 30.0)
 
         send(proc, {"method": "account/rateLimits/read", "id": 3})
         rate = wait_for_id(proc, 3, 60.0)
