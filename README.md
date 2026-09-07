@@ -2,57 +2,56 @@
 
 # OpenAI Work + Codex Regulator
 
-**Skill для ChatGPT Web, который управляет Work/Codex как исполнительными поверхностями и учитывает их общую квоту без ручного переписывания процентов в чат.**
+**Skill для ChatGPT Web, который оркестрирует Work/Codex и учитывает их общую квоту без регулярного копирования процентов в чат.**
 
 [![Разработка](https://img.shields.io/badge/development-v3.0-8250df)](CHANGELOG.md#30--in-development)
 [![Stable](https://img.shields.io/badge/stable-v2.2-0969da)](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.2)
 [![Проверка](https://github.com/misyukdima/openai-work-codex-regulator/actions/workflows/validate.yml/badge.svg)](https://github.com/misyukdima/openai-work-codex-regulator/actions/workflows/validate.yml)
-[![Тесты](https://img.shields.io/badge/regression_tests-160-success)](tests/)
+[![Тесты](https://img.shields.io/badge/regression_tests-170-success)](tests/)
 
-[Последний стабильный релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/latest) · [Как использовать](docs/USAGE.md) · [Архитектура](docs/ARCHITECTURE.md) · [История изменений](CHANGELOG.md)
+[Последний стабильный релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/latest) · [Использование](docs/USAGE.md) · [Архитектура](docs/ARCHITECTURE.md) · [Changelog](CHANGELOG.md)
 
 </div>
 
-> **v3.0 разрабатывается в `feat/v3-autonomous-quota-telemetry`.** `main` и опубликованный релиз остаются на `v2.2` до полного E2E, Pull Request и review.
+> **v3.0 разрабатывается в `feat/v3-autonomous-quota-telemetry`.** `main` и stable release остаются на `v2.2` до E2E, security review, Pull Request и review.
 
 ## Что это
 
-`openai-work-codex-regulator` работает в **ChatGPT Web**. Skill загружается в ChatGPT, а Work и Codex остаются исполнительными поверхностями: получают от ChatGPT самостоятельный handoff с целью, ограничениями, тестами и stop conditions.
+`openai-work-codex-regulator` работает **только в ChatGPT Web**. ChatGPT остаётся control plane: понимает задачу, выбирает Chat, Work или Codex, решает quota/model/admission и формирует self-contained handoff.
+
+Work и Codex ничего не устанавливают и не загружают из этого репозитория. Для них skill уже превратил задачу в готовый execution packet.
 
 ```text
 SKILL_RUNTIME=CHATGPT_WEB_ONLY
-CONTROL_PLANE_OWNER=CHATGPT
+CONTROL_PLANE_OWNER=CHAT
 WORK_CODEX_ROLE=EXECUTION_PLANE
+HANDOFF_SELF_CONTAINED=YES
 EXECUTOR_SKILL_REQUIRED=NO
 ```
 
-Регулятор выбирает поверхность, модель и effort, оценивает общий Work/Codex allowance и не даёт экономии квоты останавливать полезную работу без причины.
+Главная цель не «экономить любой ценой», а сохранить Work/Codex allowance до reset и при этом не останавливать полезную работу без веской причины.
 
-Математика `v2.2` сохраняется: epoch-anchored trajectory, burn estimation, bounded future advance, hard quality floor и баланс `QUOTA_50_PACE_50` остаются decision engine. `v3.0` меняет прежде всего способ получения meter state.
-
-## Целевой UX v3.0
-
-Для обычного пользователя установка должна закончиться почти сразу:
+## Как должен выглядеть v3.0 для пользователя
 
 ```text
 GitHub Release ZIP
         ↓
 прикрепить ZIP в ChatGPT Web
         ↓
-ChatGPT читает SKILL.md и начинает работу
+начать работу
         ↓
 quota-sensitive момент
         ↓
-Regulator Quota Plugin уже подключён?
+Quota Plugin уже подключён?
         ├─ да  → get_quota_snapshot()
-        └─ нет → ChatGPT показывает Connect / authorization
+        └─ нет → ChatGPT показывает Connect / Auth
                          ↓
-                  одно подтверждение
+                    подтверждение
                          ↓
                   get_quota_snapshot()
 ```
 
-Никаких локальных Companion, CodexBar, Terminal, Homebrew, localhost, Tailscale или ручного ввода quota snapshot в штатном сценарии.
+Обязательная настройка skill заканчивается на загрузке ZIP. Plugin подключается только тогда, когда quota впервые действительно нужна.
 
 ```text
 USER_SETUP_AFTER_ZIP=NONE
@@ -62,132 +61,172 @@ OS_DEPENDENCY=NO
 MANUAL_QUOTA_INPUT=FALLBACK_ONLY
 ```
 
+В production path нет Companion, CodexBar, Terminal, Homebrew, localhost, tunnel или отдельной настройки под Windows/macOS/Linux.
+
 ## Что уже доказано на практике
 
-7 сентября 2026 года P0 прошёл на реальном аккаунте ChatGPT Plus.
+7 сентября 2026 года прошёл P0 на реальном аккаунте ChatGPT Plus.
 
-Одноразовый удалённый GitHub Actions runner:
+Одноразовый удалённый runner:
 
 1. скачал pinned официальный OpenAI Codex CLI;
-2. запустил `codex app-server` в изолированном `CODEX_HOME`;
-3. выполнил официальный ChatGPT device authorization;
-4. дождался `account/updated`, то есть активного managed auth state;
+2. запустил `codex app-server` в изолированном временном auth state;
+3. выполнил managed ChatGPT authorization;
+4. дождался `account/login/completed`, затем authenticated `account/updated`;
 5. вызвал `account/rateLimits/read`;
-6. получил фактический Plus quota snapshot;
-7. сохранил только обезличенный proof;
+6. получил фактический Plus `codex` quota snapshot;
+7. сохранил только sanitized proof;
 8. удалил временный auth state.
-
-P0 подтвердил главное: **удалённый backend может получить точное состояние персональной Work/Codex квоты Plus без локального агента на компьютере пользователя.**
-
-Ответ OpenAI содержал `planType=plus`, отдельный `codex` rate-limit bucket, семидневное окно `10080` минут, `usedPercent`, `resetsAt` и состояние credits. Пятичасовое окно в конкретном snapshot отсутствовало. Regulator обязан трактовать такое поле как `UNAVAILABLE`, а не дорисовывать значение.
 
 ```text
 P0_SERVER_SIDE_PLUS_QUOTA=PROVEN
-FALSE_PRECISION=FORBIDDEN
-MISSING_WINDOW=UNAVAILABLE
 ```
 
-Исследовательский harness лежит в `experiments/`. Это доказательство технической возможности, а не production auth service.
+Это снимает главный feasibility risk: точную Plus quota можно получить на server side без локального агента на компьютере пользователя.
 
-## Архитектура, к которой идёт v3.0
+P0 также подтвердил важный edge case: weekly window может прийти без 5-hour window. В таком случае Regulator возвращает `UNAVAILABLE/null`, а не придумывает `0%`.
+
+## Архитектура v3.0
 
 ```text
-┌─────────────────────────────────────────────┐
-│                ChatGPT Web                  │
-│                                             │
-│  Regulator Skill                            │
-│  routing · model · admission · quota math   │
-└──────────────────────┬──────────────────────┘
-                       │ read only, when needed
+┌────────────────────────────────────────────┐
+│                ChatGPT Web                 │
+│                                            │
+│  Regulator Skill                           │
+│  routing · model · admission · quota math  │
+└──────────────────────┬─────────────────────┘
+                       │ get_quota_snapshot()
                        ▼
-┌─────────────────────────────────────────────┐
-│          Regulator Quota Plugin/App         │
-│                                             │
-│  get_quota_snapshot()                       │
-│  no routing · no admission · no purchases   │
-└──────────────────────┬──────────────────────┘
-                       │ authenticated backend
+┌────────────────────────────────────────────┐
+│         Regulator Quota Plugin/App         │
+│                                            │
+│  authenticated subject · read only         │
+└──────────────────────┬─────────────────────┘
                        ▼
-┌─────────────────────────────────────────────┐
-│          Official OpenAI Codex              │
-│                                             │
-│  codex app-server                           │
-│  account/rateLimits/read                    │
-└──────────────────────┬──────────────────────┘
-                       │ normalized facts
+┌────────────────────────────────────────────┐
+│          server-side quota backend         │
+│                                            │
+│  subject isolation · official Codex RPC    │
+└──────────────────────┬─────────────────────┘
                        ▼
-               v2.2 quota controller
+              account/rateLimits/read
+                       ↓
+                normalized facts
+                       ↓
+              v2.2 quota controller
 ```
 
-Plugin здесь только источник фактов. Он не выбирает Work/Codex, не определяет модель и не решает, можно ли запускать pass.
+Plugin является датчиком, а не вторым контроллером.
 
 ```text
 QUOTA_PLUGIN=READ_ONLY
 PLUGIN_DECISION_AUTHORITY=NONE
-CHATGPT_CONTROL_PLANE=YES
 ```
 
-## Почему мы отказались от локального Companion
+## Server-side backend
 
-Ранний прототип v3.0 исследовал `CodexBar → Companion → relay → ChatGPT`. Он помог проверить нормализацию окон, freshness, pairing и границы секретов, но не соответствует финальному UX.
+`plugin/quota_backend.py` содержит доказанный core для official `codex app-server`:
 
-После P0 локальный слой больше не нужен для основного сценария. Windows, macOS и Linux не должны иметь отдельные продуктовые ветки только ради quota telemetry. Skill живёт в ChatGPT Web, Plugin работает как удалённый read-only bridge.
+- managed auth readiness boundary;
+- read-only `account/rateLimits/read`;
+- выбор `codex` bucket;
+- duration-based window semantics;
+- missing-window handling;
+- allow-listed normalized output;
+- secret-field exclusion.
 
-Код ранних прототипов пока остаётся в feature-ветке как research material. Перед PR мы либо вынесем его из production path, либо удалим после того, как новый Plugin backend закроет те же проверяемые свойства.
+Особенно важен порядок после авторизации:
+
+```text
+account/login/completed(success=true)
+        ↓
+account/updated(authMode != null)
+        ↓
+account/rateLimits/read
+```
+
+P0 показал, что чтение сразу после `login/completed` может попасть в короткий race до auth reload. Поэтому backend ждёт реальное account readiness event, а не добавляет случайный sleep.
+
+## Subject isolation
+
+Следующий production risk уже вынесен в отдельный boundary.
+
+`plugin/subject_store.py` не использует raw ChatGPT identity как имя каталога. Внутренний key выводится из trusted subject через HMAC-SHA256 с server-held pepper:
+
+```text
+trusted Plugin subject
+        ↓ HMAC(server pepper)
+opaque subject key
+        ↓
+isolated auth context
+```
+
+`plugin/quota_service.py` принимает identity только через trusted `PluginRequestContext`. Model-facing tool по-прежнему получает пустой input schema и не может подставить другой `subject`, `email`, `account_id` или token.
+
+Development store намеренно помечен:
+
+```text
+production_safe = False
+```
+
+Он проверяет isolation/revoke/path safety в CI, но не притворяется production KMS. Перед релизом нужен отдельный audited persistent vault.
+
+## Canonical tool contract
+
+```text
+get_quota_snapshot()
+```
+
+Ноль model-provided identity arguments. Сервер сам связывает authenticated Plugin subject с авторизованным quota account.
+
+Tool не умеет:
+
+- покупать credits;
+- запускать paid reset;
+- менять spending controls;
+- выполнять generic Codex RPC;
+- запускать shell;
+- выбирать Work/Codex или model tier.
+
+Machine-readable contract: `plugin/get_quota_snapshot.tool.json`.
 
 ## Нормализация quota
 
-Regulator не связывает смысл окна с полями `primary` и `secondary`. Классификация опирается на фактическую длительность:
-
 ```text
+RATE_WINDOW_POSITION_IS_NOT_SEMANTICS
 300 minutes   → FIVE_HOUR
 10080 minutes → WEEKLY
 other         → OTHER_WINDOW
 missing       → UNAVAILABLE
 ```
 
-Ключевой invariant:
+Нельзя считать, что `primary=5h`, `secondary=weekly` или наоборот. Смысл определяется фактической длительностью окна.
 
-```text
-RATE_WINDOW_POSITION_IS_NOT_SEMANTICS
-```
+## Контроллер v2.2 остаётся ядром
 
-`scripts/quota_telemetry.py` остаётся чистым нормализатором. Он не авторизует пользователя, не покупает credits и не принимает admission decisions.
+`v3.0` не переписывает уже проверенную математику.
 
-## Как принимается решение
+Сохраняются:
 
-```text
-запрос пользователя
-        ↓
-класс риска + требуемый gate
-        ↓
-нужен ли quota snapshot сейчас?
-        ↓
-get_quota_snapshot() при необходимости
-        ↓
-minimum sufficient model
-        ↓
-safety + permissions + quality
-        ↓
-weekly quota trajectory
-        ↓
-quota risk ↔ workflow pace risk
-        ↓
-launch / advance / productive alternative / defer / stop
-```
+- один quota epoch и cumulative trajectory;
+- 24h normal look-ahead;
+- bounded future advance до 72h той же trajectory;
+- conservative observed-burn estimator;
+- `PENDING_BURN`;
+- независимый 5h breaker, когда 5h telemetry реально известна;
+- `QUALITY_FLOOR=NON_NEGOTIABLE`;
+- баланс `QUOTA_50_PACE_50` после hard gates.
 
-Обычный Chat-анализ не должен опрашивать quota без причины. Refresh нужен перед существенным Work/Codex pass, после него, при stale snapshot, pending burn или смене quota epoch.
+Automatic telemetry меняет acquisition, а не admission math.
 
 ## Handoff в Work и Codex
 
-Skill не устанавливается в Work или Codex. ChatGPT передаёт исполнителю self-contained пакет:
-
 ```text
-ChatGPT + Regulator
+ChatGPT Regulator
         ↓
-цель + fact pack + scope + no-touch
+goal + fact pack + scope + no-touch
         ↓
-tests + rollback + stop conditions
+tests/evidence + rollback + stop conditions
         ↓
 Work или Codex
         ↓
@@ -196,119 +235,119 @@ execution + evidence
 ChatGPT принимает следующее решение
 ```
 
+В ordinary executor packet не попадают Plugin credentials, quota epoch, trajectory headroom, telemetry plumbing или внутренние quota/pace scores.
+
+## Безопасность
+
+Production release должен доказать:
+
 ```text
-HANDOFF_SELF_CONTAINED=YES
-EXECUTOR_SKILL_REQUIRED=NO
+SUBJECT_ACCOUNT_BINDING_AUDITED=YES
+CREDENTIAL_ISOLATION_AUDITED=YES
+ENCRYPTION_AT_REST_REQUIRED=YES
+TOKEN_REFRESH_TESTED=YES
+TOKEN_REVOCATION_TESTED=YES
+LOGOUT_PATH_TESTED=YES
+CROSS_SUBJECT_READ=FORBIDDEN
+SILENT_ACCOUNT_SWITCH=FORBIDDEN
 ```
 
-Так orchestration остаётся в одном месте, а downstream executor не обязан знать внутреннюю quota math.
+P0 использовал ephemeral auth и удалил его после проверки. Это хороший proof для acquisition, но не модель долгоживущего credential storage.
 
-## Безопасность telemetry
+## Текущее состояние
 
-Production path должен оставаться минимальным и read-only:
-
-- Plugin возвращает только данные, нужные controller;
-- model не получает OAuth tokens, cookies и raw auth files;
-- `get_quota_snapshot()` не принимает email, installation id или token как model-provided arguments;
-- telemetry path не умеет покупать credits, запускать paid reset или менять spending controls;
-- stale snapshot никогда не выдаётся за fresh;
-- отсутствие окна не превращается в выдуманный процент.
-
-P0 специально использовал временный `CODEX_HOME` и удалил его после теста. Для production Plugin отдельным release gate остаётся безопасный credential lifecycle: тестовый runner не считается моделью хранения пользовательской авторизации.
-
-## Текущее состояние v3.0
-
-| Слой | Статус | Что доказано |
+| Слой | Статус | Что есть сейчас |
 | --- | --- | --- |
-| v2.2 quota controller | ✅ | математический decision engine сохраняется |
-| telemetry normalization | ✅ | duration-based windows, freshness, missing-window semantics |
-| server-side Plus quota P0 | ✅ | официальный Codex backend вернул фактический quota snapshot |
-| read-only Plugin contract | 🟡 | интерфейс `get_quota_snapshot()` определён, production integration впереди |
-| ChatGPT Web Connect/Auth E2E | 🟡 | целевой UX определён; нужен реальный Plugin/App integration test |
-| production credential lifecycle | 🟡 | P0 был ephemeral; постоянный безопасный auth backend ещё не release-ready |
-| release v3.0 | ⛔ | до E2E, security review и PR в `main` |
-
-`v3.0` не будет сливаться в `main`, пока Plugin не пройдёт настоящий путь ChatGPT Web → Connect/Auth → exact quota → controller без локальной установки и ручного quota bookkeeping.
+| v2.2 quota controller | ✅ | deterministic decision engine |
+| quota normalization | ✅ | weekly/5h/other/missing semantics |
+| server-side Plus P0 | ✅ | exact `codex` quota read через official Codex |
+| Plugin backend core | ✅ | read-only JSON-RPC + normalized output |
+| subject isolation core | ✅ | opaque HMAC keys, scoped contexts/revoke, model identity override blocked |
+| ChatGPT Web Connect/Auth E2E | 🟡 | ещё нужен реальный Plugin/App integration test |
+| production credential vault | 🟡 | interface есть, audited KMS/secret adapter ещё не выбран/реализован |
+| security review | 🟡 | release gate |
+| v3.0 release | ⛔ | PR в `main` пока рано |
 
 ## Что лежит в репозитории
 
 ```text
-SKILL.md                              основной контракт ChatGPT Web
-references/                           нормативные правила
-  01_SURFACE_ROUTING.md               Chat / Work / Codex routing
-  02_SHARED_QUOTA_AND_CREDITS.md      общая квота и credits
-  03_TASK_CLASSIFICATION.md           классы риска 0–4
-  04_RUNWAY_AND_BURN.md               runway и burn accounting
-  05_WORK_BROWSER_AND_ACTIONS.md      браузер и внешние действия
-  06_CODEX_TECHNICAL_WORK.md          код, Git, серверы, deploy
-  07_FAILURES_AND_RECOVERY.md         ошибки и recovery
-  08_MODEL_TIER_ROUTING.md            Luna / Terra / Sol
-  09_ASTRA_EXECUTION.md               Astra admission
-  10_WEEKLY_QUOTA_CONTROLLER.md       недельный quota controller
-  11_ORCHESTRATION_AND_HANDOFF.md     self-contained handoff
-  12_AUTONOMOUS_QUOTA_TELEMETRY.md    automatic telemetry contract
-  SOURCE_MAP.md                       provenance
+SKILL.md
+references/
+  10_WEEKLY_QUOTA_CONTROLLER.md
+  11_ORCHESTRATION_AND_HANDOFF.md
+  12_AUTONOMOUS_QUOTA_TELEMETRY.md
+  13_CHATGPT_PLUGIN_AND_QUOTA_BACKEND.md
+  SOURCE_MAP.md
 
-docs/                                 использование и архитектура
+docs/
+  USAGE.md
+  ARCHITECTURE.md
+
 scripts/
-  weekly_quota_controller.py          математический decision engine
-  quota_telemetry.py                  telemetry normalizer
+  weekly_quota_controller.py
+  quota_telemetry.py
+
+plugin/
+  quota_backend.py
+  subject_store.py
+  quota_service.py
+  get_quota_snapshot.tool.json
+
 experiments/
-  p0_headless_quota_probe.py          доказанный headless Plus P0
+  p0_headless_quota_probe.py
+
 tests/
-  TEST_CASES.md                       базовые regression cases
-  TEST_CASES_V2_2.md                  v2.2 additions
-  TEST_CASES_V3_0.md                  v3.0 additions
+  TEST_CASES.md
+  TEST_CASES_V2_2.md
+  TEST_CASES_V3_0.md
+  TEST_CASES_V3_0_SECURITY.md
 ```
 
-Ранние `companion/` и relay-компоненты пока сохраняются только как исследовательская ветка. Они не определяют целевой пользовательский путь v3.0.
+Ранние `companion/` и `relay/` компоненты могут оставаться в feature-ветке только как research history. Validator и release contract больше от них не зависят.
 
-## Проверка ветки
+## Проверка
 
 ```bash
 python3 scripts/validate_repo.py
-python3 scripts/quota_telemetry.py --self-test
-python3 scripts/weekly_quota_controller.py \
-  --anchor-weekly-used 0 \
-  --anchor-hours-to-reset 168 \
-  --hours-to-reset-now 168 \
-  --current-weekly-used 0 \
-  --self-test
+python3 plugin/quota_backend.py --self-test
+python3 plugin/subject_store.py
+python3 plugin/quota_service.py
 python3 scripts/package_release.py
 ```
 
-Сейчас regression-набор содержит **160 последовательных сценариев**. Это текущий baseline ветки, а не финальное число для релиза.
+Сейчас regression suite содержит **170 последовательных сценариев**.
 
 ## История версий
 
 | Версия | Что изменилось | Статус |
 | --- | --- | --- |
-| **v3.0** | ChatGPT Web control plane, automatic exact quota telemetry, just-in-time Plugin auth, manual fallback | В разработке |
-| **v2.2** | Баланс квоты и рабочего темпа, cumulative trajectory, bounded future advance, независимый downstream executor | [Релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.2) |
-| **v2.1** | Адаптивный недельный quota controller, burn estimation, 24h control slice, quality floor | [Релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.1) |
-| **v2.0** | Профиль Astra, allowance domains, steering и safety-pause semantics | [Релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.0) |
-| **v1.2** | Маршрутизация Luna / Terra / Sol и выбор effort по сложности | [Релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v1.2) |
-| **v1.1** | Quota-saving routing, prompt-injection защита, account checks и release hardening | [Релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v1.1) |
-| **v1.0** | Первая версия: surface routing, shared pool, risk classes, browser/Codex discipline | [CHANGELOG](CHANGELOG.md#10--2026-08-21) |
+| **v3.0** | ChatGPT Web-only control plane, exact server-side quota telemetry, just-in-time Plugin auth, subject-isolated backend | В разработке |
+| **v2.2** | Баланс quota/workflow pace, cumulative trajectory, bounded future advance, independent executor | [Релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.2) |
+| **v2.1** | Adaptive weekly controller, burn estimation, 5h breaker, quality floor | [Релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.1) |
+| **v2.0** | Astra profile, allowance domains, steering и safety semantics | [Релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.0) |
+| **v1.2** | Luna / Terra / Sol routing и effort selection | [Релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v1.2) |
+| **v1.1** | Quota-saving routing, security и release hardening | [Релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v1.1) |
+| **v1.0** | Surface routing, shared pool, risk classes, execution discipline | [CHANGELOG](CHANGELOG.md#10--2026-08-21) |
 
 ## Документация
 
-- [SKILL.md](SKILL.md) — исполняемый регламент ChatGPT Web.
-- [docs/USAGE.md](docs/USAGE.md) — рабочие сценарии.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — устройство регулятора.
-- [references/12_AUTONOMOUS_QUOTA_TELEMETRY.md](references/12_AUTONOMOUS_QUOTA_TELEMETRY.md) — контракт automatic telemetry.
-- [references/SOURCE_MAP.md](references/SOURCE_MAP.md) — provenance и времязависимые факты.
-- [SECURITY.md](SECURITY.md) — политика безопасности.
-- [CONTRIBUTING.md](CONTRIBUTING.md) — правила изменений.
+- [SKILL.md](SKILL.md): executable ChatGPT Web contract.
+- [docs/USAGE.md](docs/USAGE.md): рабочий сценарий.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): архитектура v3.0.
+- [references/12_AUTONOMOUS_QUOTA_TELEMETRY.md](references/12_AUTONOMOUS_QUOTA_TELEMETRY.md): automatic telemetry semantics.
+- [references/13_CHATGPT_PLUGIN_AND_QUOTA_BACKEND.md](references/13_CHATGPT_PLUGIN_AND_QUOTA_BACKEND.md): Plugin/backend security boundary.
+- [references/SOURCE_MAP.md](references/SOURCE_MAP.md): provenance.
+- [SECURITY.md](SECURITY.md): политика безопасности.
+- [CONTRIBUTING.md](CONTRIBUTING.md): правила изменений.
 
-## Важное про квоту
+## Важное про точность
 
-Regulator не угадывает неизвестный meter state. Exact telemetry означает только фактические поля, которые вернул источник. Если окно не пришло, оно остаётся `UNAVAILABLE`. Если snapshot устарел, он становится `STALE`. Если post-pass meter ещё не обновился, сохраняется `PENDING_BURN`.
+Regulator не превращает неизвестное значение в удобную цифру. Missing window остаётся `UNAVAILABLE`, stale snapshot остаётся `STALE`, а delayed post-pass meter остаётся `PENDING_BURN`, пока не появится достаточное evidence.
 
-Это принципиальная граница v3.0: автоматизация убирает ручную рутину, но не создаёт ложную точность.
+Автоматизация убирает ручную рутину, а не требования к доказательности.
 
 ---
 
 <p align="center">
-  <sub>В разработке: <strong>v3.0</strong> · stable: <strong>v2.2</strong> · 160 regression-сценариев</sub>
+  <sub>development: <strong>v3.0</strong> · stable: <strong>v2.2</strong> · 170 regression-сценариев</sub>
 </p>

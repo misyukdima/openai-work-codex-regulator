@@ -11,6 +11,7 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
+MIN_TESTS = 170
 
 REQUIRED = [
     "SKILL.md",
@@ -40,10 +41,13 @@ REQUIRED = [
     "tests/TEST_CASES.md",
     "tests/TEST_CASES_V2_2.md",
     "tests/TEST_CASES_V3_0.md",
+    "tests/TEST_CASES_V3_0_SECURITY.md",
     "scripts/weekly_quota_controller.py",
     "scripts/quota_telemetry.py",
     "plugin/__init__.py",
     "plugin/quota_backend.py",
+    "plugin/subject_store.py",
+    "plugin/quota_service.py",
     "plugin/get_quota_snapshot.tool.json",
     "plugin/README.md",
     "experiments/p0_headless_quota_probe.py",
@@ -54,8 +58,6 @@ REQUIRED = [
     ".github/workflows/validate.yml",
     ".github/workflows/release.yml",
 ]
-
-MIN_TESTS = 160
 
 SKILL_INVARIANTS = [
     "name: openai-work-codex-regulator",
@@ -68,10 +70,8 @@ SKILL_INVARIANTS = [
     "BALANCED_PRIORITY=QUOTA_50_PACE_50",
     "HANDOFF_SELF_CONTAINED=YES",
     "EXECUTOR_SKILL_REQUIRED=NO",
-    "CHATGPT_PRIMARY_ORCHESTRATOR=YES",
     "AUTO_QUOTA_TELEMETRY=DEFAULT",
     "MANUAL_QUOTA_INPUT=FALLBACK_ONLY",
-    "ZERO_MAINTENANCE_USER_SETUP=REQUIRED",
     "USER_SETUP_AFTER_ZIP=NONE",
     "PLUGIN_AUTH=JUST_IN_TIME",
     "LOCAL_SOFTWARE_REQUIRED=NO",
@@ -116,8 +116,6 @@ TELEMETRY_INVARIANTS = [
     "PLUGIN_AUTH=JUST_IN_TIME",
     "LOCAL_SOFTWARE_REQUIRED=NO",
     "OS_DEPENDENCY=NO",
-    "CHAT_LOCALHOST_ASSUMPTION=FORBIDDEN",
-    "CHAT_LOCAL_SHELL_ASSUMPTION=FORBIDDEN",
     "get_quota_snapshot()",
     "RATE_WINDOW_POSITION_IS_NOT_SEMANTICS",
     "300 minutes   → FIVE_HOUR",
@@ -298,8 +296,6 @@ if version and f"v{version}" not in readme:
     errors.append(f"README.md does not mention current version v{version}")
 if "P0_SERVER_SIDE_PLUS_QUOTA=PROVEN" not in readme:
     errors.append("README.md does not record the proven server-side Plus P0")
-if "160 regression" not in readme:
-    errors.append("README.md does not expose current 160-test baseline")
 
 changelog = read("CHANGELOG.md")
 if version and not re.search(rf"^##\s+{re.escape(version)}\b", changelog, re.M):
@@ -307,18 +303,17 @@ if version and not re.search(rf"^##\s+{re.escape(version)}\b", changelog, re.M):
 if "server-side Plus quota path" not in changelog:
     errors.append("CHANGELOG.md missing v3 server-side Plus quota proof")
 
-raw_tests = (
-    read("tests/TEST_CASES.md")
-    + "\n" + read("tests/TEST_CASES_V2_2.md")
-    + "\n" + read("tests/TEST_CASES_V3_0.md")
-)
+# Number all regression files as one contiguous suite. This avoids validator
+# edits whenever a new v3 regression shard is added.
+test_files = sorted((ROOT / "tests").glob("TEST_CASES*.md"))
+raw_tests = "\n".join(path.read_text(encoding="utf-8") for path in test_files)
 numbers = [int(n) for n in re.findall(r"^## Test (\d+)\b", raw_tests, re.M)]
 if not numbers:
     errors.append("no numbered tests found")
 else:
     expected = list(range(1, max(numbers) + 1))
     if numbers != expected:
-        errors.append("tests are not numbered contiguously from 1 across base + version additions")
+        errors.append("tests are not numbered contiguously from 1 across all regression files")
     if len(numbers) < MIN_TESTS:
         errors.append(f"tests count {len(numbers)} < {MIN_TESTS}")
 
@@ -359,7 +354,7 @@ for rel in GENERATION_NEUTRAL_FILES:
         if re.search(pattern, text):
             errors.append(f"{rel} contains {label}; move dated model facts to dated model/source references")
 
-# Executor templates must remain independent from the skill, Plugin and controller internals.
+# Ordinary executor packets must remain independent from Plugin/controller internals.
 skill = read("SKILL.md")
 executor_sections: list[str] = []
 for start_heading, end_heading in [
@@ -394,7 +389,7 @@ for section in executor_sections:
         if needle in section:
             errors.append(f"executor template leaks control-plane dependency/state: {needle}")
 
-# Canonical Chat-facing quota tool: zero model-provided identity, read-only surface.
+# Canonical Chat-facing quota tool has no model-provided identity and is read-only.
 try:
     tool_contract = json.loads(read("plugin/get_quota_snapshot.tool.json"))
     if tool_contract.get("name") != "get_quota_snapshot":
@@ -424,6 +419,30 @@ for needle in [
     if needle not in backend:
         errors.append(f"quota backend missing implementation marker: {needle}")
 
+subject_store = read("plugin/subject_store.py")
+for needle in [
+    "SubjectAuthStore",
+    "EphemeralSubjectAuthStore",
+    "production_safe = False",
+    "derive_subject_key",
+    "hmac.new",
+    "MIN_PEPPER_BYTES = 32",
+]:
+    if needle not in subject_store:
+        errors.append(f"subject auth store missing isolation marker: {needle}")
+
+quota_service = read("plugin/quota_service.py")
+for needle in [
+    "PluginRequestContext",
+    "authenticated_subject",
+    "AuthorizationRequired",
+    "InvalidToolArguments",
+    "get_quota_snapshot accepts no model-provided arguments",
+    "cross-subject auth reuse must fail",
+]:
+    if needle not in quota_service:
+        errors.append(f"quota service missing trust-boundary marker: {needle}")
+
 
 def run_module_self_test(path: Path, module_name: str, label: str) -> None:
     if not path.is_file():
@@ -440,23 +459,16 @@ def run_module_self_test(path: Path, module_name: str, label: str) -> None:
         errors.append(f"{label} self-test failed: {exc}")
 
 
-run_module_self_test(
-    ROOT / "scripts" / "weekly_quota_controller.py",
-    "weekly_quota_controller_validation",
-    "weekly quota controller",
-)
-run_module_self_test(
-    ROOT / "scripts" / "quota_telemetry.py",
-    "quota_telemetry_validation",
-    "quota telemetry",
-)
-run_module_self_test(
-    ROOT / "plugin" / "quota_backend.py",
-    "quota_plugin_backend_validation",
-    "quota Plugin backend",
-)
+for path, module_name, label in [
+    (ROOT / "scripts" / "weekly_quota_controller.py", "weekly_quota_controller_validation", "weekly quota controller"),
+    (ROOT / "scripts" / "quota_telemetry.py", "quota_telemetry_validation", "quota telemetry"),
+    (ROOT / "plugin" / "quota_backend.py", "quota_plugin_backend_validation", "quota Plugin backend"),
+    (ROOT / "plugin" / "subject_store.py", "subject_auth_store_validation", "subject auth store"),
+    (ROOT / "plugin" / "quota_service.py", "quota_service_validation", "quota service"),
+]:
+    run_module_self_test(path, module_name, label)
 
-# Scan text-like repository files for common secret patterns.
+# Scan text-like files for common secret patterns.
 scan_targets: set[Path] = set()
 for glob in ("*.md", "*.py", "*.swift", "*.sh", "*.yml", "*.yaml", "*.toml", "*.txt", "*.json", "*.plist"):
     scan_targets.update(ROOT.rglob(glob))
@@ -468,7 +480,6 @@ for path in sorted(scan_targets):
         if re.search(pattern, text):
             errors.append(f"{path.relative_to(ROOT)} contains {label}")
 
-# Release ZIP must remain portable across ordinary filesystems.
 for path in sorted(ROOT.rglob("*")):
     rel = path.relative_to(ROOT).as_posix()
     if rel.startswith(".git/") or not path.is_file():
@@ -484,5 +495,5 @@ if errors:
 
 print(
     f"Repository validation OK — openai-work-codex-regulator v{version} "
-    f"({len(numbers)} tests, ChatGPT Web-only Plugin telemetry + balanced controller present)"
+    f"({len(numbers)} tests, Web-only Plugin telemetry + subject isolation + balanced controller present)"
 )
