@@ -17,6 +17,8 @@ jobs:
         run: python3 scripts/validate_repo.py
       - name: Validate Plugin package contract
         run: python3 scripts/validate_plugin_package.py
+      - name: Validate v3 release contract
+        run: python3 scripts/validate_v3_release_contract.py
       - name: Validate quota Plugin backend
         run: python3 plugin/quota_backend.py --self-test
       - name: Validate sealed auth lifecycle
@@ -33,3 +35,7 @@ jobs:
         run: python3 -m pip install --disable-pip-version-check -r plugin/requirements-mcp.txt
       - name: Validate MCP transport
         run: python3 plugin/mcp_transport.py --self-test
+      - name: Install pinned OAuth verifier dependencies
+        run: python3 -m pip install --disable-pip-version-check -r plugin/requirements-auth.txt
+      - name: Validate OIDC/JWKS token verifier
+        run: python3 plugin/oidc_token_verifier.py --self-test

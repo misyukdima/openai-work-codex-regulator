@@ -1,0 +1,4 @@
+# Exact direct dependency for production OAuth/OIDC access-token verification.
+# PyJWT[crypto] supplies verified asymmetric JWT/JWK handling; the repository
+# does not implement signing, key generation, or authorization-server logic.
+PyJWT[crypto]==2.13.0
