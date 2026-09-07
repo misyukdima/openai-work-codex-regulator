@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 import re
 import sys
+from typing import Any, Iterator
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,6 +43,17 @@ errors: list[str] = []
 def read(rel: str) -> str:
     path = ROOT / rel
     return path.read_text(encoding="utf-8") if path.is_file() else ""
+
+
+def json_object_keys(value: Any) -> Iterator[str]:
+    """Yield JSON object keys recursively without treating values as field names."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            yield str(key)
+            yield from json_object_keys(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from json_object_keys(child)
 
 
 for rel in REQUIRED:
@@ -195,17 +207,16 @@ try:
         errors.append("staging profile PKCE drifted")
     if profile.get("secrets_in_repository") is not False:
         errors.append("staging profile must explicitly forbid repository secrets")
-    serialized = json.dumps(profile).lower()
-    for secret_marker in [
+
+    forbidden_secret_fields = {
         "client_secret",
         "access_token",
         "refresh_token",
         "private_key",
-    ]:
-        if secret_marker in serialized:
-            errors.append(
-                f"staging profile must not contain secret field: {secret_marker}"
-            )
+    }
+    profile_keys = {key.lower() for key in json_object_keys(profile)}
+    for secret_field in sorted(forbidden_secret_fields & profile_keys):
+        errors.append(f"staging profile must not contain secret field: {secret_field}")
 except Exception as exc:
     errors.append(f"Auth0 staging profile invalid: {exc}")
 
