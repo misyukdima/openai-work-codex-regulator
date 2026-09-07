@@ -7,18 +7,24 @@ Major ChatGPT Web orchestration release with automatic Work/Codex quota telemetr
 - Fixed the product boundary: the v3.0 skill runs in **ChatGPT Web only**. Work and Codex are execution surfaces that receive self-contained handoffs; the skill is not a prerequisite for either executor.
 - Made automatic Work/Codex quota telemetry the normal control-plane path with `AUTO_QUOTA_TELEMETRY=DEFAULT` and moved manual snapshots to `MANUAL_QUOTA_INPUT=FALLBACK_ONLY`.
 - Defined the target onboarding as `GitHub Release ZIP → attach in ChatGPT Web → work`. No local Companion, Terminal, Homebrew, CodexBar, localhost, tunnel or OS-specific setup belongs to the production path.
-- Added just-in-time Plugin/App authorization: ChatGPT should request `Connect` only when a quota-sensitive decision first needs `get_quota_snapshot()`.
-- Proved the server-side Plus quota path in P0 on 2026-09-07. An ephemeral remote runner used the pinned official OpenAI Codex CLI, completed managed ChatGPT authorization, waited for authenticated `account/updated`, called `account/rateLimits/read`, received an exact Plus quota snapshot and then deleted the temporary auth state.
-- The P0 also confirmed missing-window semantics: a response may contain a weekly `10080`-minute window without a 5-hour window. Missing telemetry remains `UNAVAILABLE`/`null`; v3.0 never invents a value.
-- Added `plugin/quota_backend.py`, a read-only server-side backend core for official `codex app-server`. It implements the proven auth-readiness boundary, reads account rate limits and normalizes the `codex` bucket without exposing auth material to the model-facing contract.
-- Added `plugin/get_quota_snapshot.tool.json`. The canonical quota tool accepts no model-provided identity, account selector or secret arguments and is annotated read-only/idempotent.
-- Added an isolated backend self-test to CI. It covers weekly/5h duration classification, missing 5h state, `codex` bucket selection, unknown windows and secret-field exclusion without using network access or credentials.
-- Kept `scripts/quota_telemetry.py` as a pure telemetry normalizer and retained duration-based semantics: `300` minutes means 5h, `10080` minutes means weekly, other durations stay `OTHER_WINDOW`; field position is never semantic truth.
+- Added just-in-time Plugin/App authorization: ChatGPT requests Connect only when a quota-sensitive decision first needs `get_quota_snapshot()`.
+- Proved the server-side Plus quota path in P0 on 2026-09-07. An ephemeral remote runner used the pinned official OpenAI Codex CLI, completed managed ChatGPT authorization, waited for authenticated `account/updated`, called `account/rateLimits/read`, received an exact Plus quota snapshot and deleted temporary auth state.
+- Confirmed missing-window semantics in P0: a weekly `10080`-minute window may exist without a 5-hour window. Missing telemetry stays `UNAVAILABLE`/`null`; v3.0 does not synthesize `0%`.
+- Added `plugin/quota_backend.py`, a read-only server-side core for official `codex app-server`, including the proven auth-readiness boundary, `codex` bucket selection, duration-based window normalization and secret-field exclusion.
+- Added the zero-argument, read-only `plugin/get_quota_snapshot.tool.json`; model input cannot select a subject, account, workspace or credential.
+- Added HMAC-based subject isolation and a trusted `PluginRequestContext`; raw ChatGPT identity does not become a filesystem/object path and cross-subject auth reuse fails closed.
+- Added `plugin/sealed_auth_store.py`: durable auth is represented as a sealed `auth.json` blob, plaintext exists only in a private temporary `CODEX_HOME`, official refresh state is resealed after successful operations, and temporary plaintext is removed.
+- Kept production cryptography outside the repository. `plugin/production_vault.py` requires an injected audited durable provider and external KMS/envelope provider with an explicit key reference and algorithm id; repository test doubles remain `production_safe=False`.
+- Added `plugin/authorization_coordinator.py` for JIT device-code Connect/Auth. Duplicate Connect for the same subject reuses one pending flow; authorization ids are subject-bound; cancel closes the live client; revoke waits for the worker before deleting durable auth.
+- Added `plugin/auth_concurrency.py` to serialize authorize/read/revoke for one opaque subject key and prevent lost token-refresh updates. The in-process lease is CI/single-worker only; production requires a cross-worker lease provider.
+- Hardened the production vault contract: durable sealed-blob replacement must be atomic, external crypto must be production-safe, and cross-worker subject serialization is mandatory. Missing any one property fails the production gate.
 - Preserved the v2.2 epoch-anchored trajectory, observed-burn estimator, equal quota/pace priority, hard quality floor, 5h circuit breaker and bounded future advance as the mathematical decision engine.
-- Expanded the v3 branch to 160 contiguous regression scenarios. The current suite still contains early Companion/relay research cases; these are being rewritten around the final ChatGPT Web + Plugin architecture before release.
-- Early CodexBar/Companion/relay work is retained temporarily as research evidence only. It is no longer the production architecture and will not be a release prerequisite.
+- Expanded the branch to **190 contiguous regression scenarios** covering Web-only runtime, P0 normalization, subject isolation, sealed auth lifecycle, JIT authorization, revoke ordering, provider safety and concurrency races.
+- Fixed regression validation so shard filenames do not control global numbering: shard-local numbers must increase, the global set must be unique and contiguous, and new shards can be added without a hidden lexical-order contract.
+- Added dedicated CI gates for the quota backend, sealed auth lifecycle, authorization coordinator, auth concurrency and production vault adapter.
+- Early CodexBar/Companion/relay work remains research history only. It is not normative architecture and is not a release prerequisite.
 
-> Development gate: exact server-side Plus quota acquisition is proven. v3.0 is still not release-ready until the ChatGPT Web Plugin/App path passes real Connect/Auth E2E, production credential isolation/rotation/revocation is audited, and the feature branch completes security review before Pull Request to `main`.
+> Development gate: exact server-side Plus quota acquisition and the core credential lifecycle are implemented and regression-tested. v3.0 remains development-only until real ChatGPT Web Connect/Auth E2E passes with a selected production KMS/secret backend and cross-worker lease provider, refresh/revoke/logout and crash recovery are verified, and security review is complete before Pull Request to `main`.
 
 ## 2.2 — 2026-09-06
 
