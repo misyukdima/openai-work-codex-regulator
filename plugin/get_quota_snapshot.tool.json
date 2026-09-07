@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "get_quota_snapshot",
+  "description": "Read the authenticated user's normalized Work/Codex quota snapshot for regulator admission. This tool is read-only and accepts no model-provided identity or secret arguments.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": [
+      "schema_version",
+      "allowance_domain",
+      "source",
+      "snapshot_at",
+      "freshness",
+      "weekly_meter_semantics",
+      "weekly_used",
+      "weekly_reset",
+      "five_hour_used",
+      "five_hour_reset"
+    ],
+    "properties": {
+      "schema_version": {
+        "type": "integer",
+        "const": 1
+      },
+      "allowance_domain": {
+        "type": "string",
+        "const": "WORK_CODEX"
+      },
+      "source": {
+        "type": "string",
+        "const": "OPENAI_CODEX_APP_SERVER"
+      },
+      "snapshot_at": {
+        "type": "string"
+      },
+      "freshness": {
+        "type": "string",
+        "enum": ["FRESH", "STALE", "UNAVAILABLE", "CONFLICT", "UNKNOWN"]
+      },
+      "weekly_meter_semantics": {
+        "type": "string",
+        "const": "USED"
+      },
+      "weekly_used": {
+        "type": ["number", "null"],
+        "minimum": 0,
+        "maximum": 100
+      },
+      "weekly_reset": {
+        "type": ["integer", "string", "null"]
+      },
+      "five_hour_used": {
+        "type": ["number", "null"],
+        "minimum": 0,
+        "maximum": 100
+      },
+      "five_hour_reset": {
+        "type": ["integer", "string", "null"]
+      },
+      "other_windows": {
+        "type": "array"
+      },
+      "plan_type": {
+        "type": ["string", "null"]
+      },
+      "ordinary_usage_allowed": {
+        "type": ["boolean", "null"]
+      },
+      "credits": {
+        "type": "object"
+      }
+    },
+    "additionalProperties": false
+  },
+  "annotations": {
+    "readOnlyHint": true,
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": true
+  }
+}

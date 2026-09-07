@@ -15,3 +15,5 @@ jobs:
         uses: actions/checkout@v4
       - name: Validate repository
         run: python3 scripts/validate_repo.py
+      - name: Validate quota Plugin backend
+        run: python3 plugin/quota_backend.py --self-test
