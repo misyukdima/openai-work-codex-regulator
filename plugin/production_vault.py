@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Provider-neutral production vault adapters for sealed Plugin auth state.
 
-The repository intentionally does not implement cryptography. Production must
-inject audited external storage and crypto providers. These adapters only bind
-those providers to the narrow `SealedBlobStore` / `EnvelopeCipher` contracts.
+The repository intentionally does not implement cryptography or distributed
+locking. Production injects audited external storage, crypto and per-subject
+lease providers. These adapters bind them to the narrow regulator contracts and
+fail closed when required safety properties are absent.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 try:
+    from plugin.auth_concurrency import LeaseProtectedAuthStore, SubjectLeaseProvider
     from plugin.sealed_auth_store import (
         EnvelopeCipher,
         SealedBlobStore,
@@ -22,6 +24,7 @@ try:
 except ModuleNotFoundError:
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from plugin.auth_concurrency import LeaseProtectedAuthStore, SubjectLeaseProvider
     from plugin.sealed_auth_store import (
         EnvelopeCipher,
         SealedBlobStore,
@@ -39,9 +42,15 @@ class InvalidVaultConfiguration(RuntimeError):
 
 @runtime_checkable
 class DurableBlobProvider(Protocol):
-    """External durable object/secret store reviewed by the deployer."""
+    """External durable object/secret store reviewed by the deployer.
+
+    `atomic_replace=True` means readers never observe a partially written object
+    when one sealed blob replaces another. The deployment is responsible for
+    proving that property for the selected backend.
+    """
 
     production_safe: bool
+    atomic_replace: bool
 
     def get_bytes(self, object_key: str) -> bytes | None:
         ...
@@ -77,7 +86,10 @@ class DurableSealedBlobStore:
         if not cleaned or ".." in cleaned:
             raise InvalidVaultConfiguration("vault object prefix is invalid")
         self.prefix = cleaned
-        self.production_safe = bool(getattr(provider, "production_safe", False))
+        self.production_safe = bool(
+            getattr(provider, "production_safe", False)
+            and getattr(provider, "atomic_replace", False)
+        )
 
     def _object_key(self, subject_key: str) -> str:
         if not _SUBJECT_KEY_RE.fullmatch(subject_key):
@@ -147,22 +159,41 @@ def build_production_auth_store(
     pepper: bytes,
     blob_provider: DurableBlobProvider,
     crypto_provider: EnvelopeCryptoProvider,
+    lease_provider: SubjectLeaseProvider,
     prefix: str = "regulator-auth/v1",
-) -> SealedSubjectAuthStore:
-    """Build and enforce the production-safe sealed auth-store boundary."""
+    lease_wait_timeout_seconds: float = 30.0,
+) -> LeaseProtectedAuthStore:
+    """Build the complete production credential boundary.
+
+    Production safety requires all three independently reviewed properties:
+    durable atomic blob replacement, external envelope cryptography and a
+    cross-worker subject lease. One missing property keeps the store unsafe.
+    """
     blob_store: SealedBlobStore = DurableSealedBlobStore(blob_provider, prefix=prefix)
     cipher: EnvelopeCipher = ExternalEnvelopeCipher(crypto_provider)
-    store = SealedSubjectAuthStore(
+    sealed_store = SealedSubjectAuthStore(
         pepper=pepper,
         blob_store=blob_store,
         cipher=cipher,
     )
-    require_production_safe(store)
-    return store
+    require_production_safe(sealed_store)
+
+    protected = LeaseProtectedAuthStore(
+        delegate=sealed_store,
+        pepper=pepper,
+        lease_provider=lease_provider,
+        wait_timeout_seconds=lease_wait_timeout_seconds,
+    )
+    if not protected.production_safe:
+        raise InvalidVaultConfiguration(
+            "production requires a production-safe cross-worker subject lease provider"
+        )
+    return protected
 
 
 class _UnsafeBlobProvider:
     production_safe = False
+    atomic_replace = False
 
     def __init__(self) -> None:
         self.items: dict[str, bytes] = {}
@@ -193,6 +224,8 @@ class _UnsafeCryptoProvider:
 
 
 def self_test() -> None:
+    from plugin.auth_concurrency import InProcessSubjectLeaseProvider
+
     blobs = _UnsafeBlobProvider()
     crypto = _UnsafeCryptoProvider()
     blob_adapter = DurableSealedBlobStore(blobs, prefix="regulator-auth/v1")
@@ -217,11 +250,12 @@ def self_test() -> None:
             pepper=b"v" * 32,
             blob_provider=blobs,
             crypto_provider=crypto,
+            lease_provider=InProcessSubjectLeaseProvider(),
         )
     except Exception as exc:
         assert "production" in str(exc).lower()
     else:
-        raise AssertionError("unsafe provider pair must fail production gate")
+        raise AssertionError("unsafe provider set must fail production gate")
 
     print("production_vault_adapter_self_test=ok")
 

@@ -21,5 +21,7 @@ jobs:
         run: python3 plugin/sealed_auth_store.py
       - name: Validate authorization coordinator
         run: python3 plugin/authorization_coordinator.py
+      - name: Validate auth concurrency
+        run: python3 plugin/auth_concurrency.py
       - name: Validate production vault adapter
         run: python3 plugin/production_vault.py

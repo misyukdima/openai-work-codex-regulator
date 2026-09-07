@@ -62,18 +62,6 @@ guaranteed plaintext cleanup
 
 `SealedBlobStore` и `EnvelopeCipher` являются injected adapters. Репозиторный `ReversibleTestCipher` не является шифрованием и специально имеет `production_safe=False`.
 
-### `production_vault.py`
-
-Связывает sealed lifecycle с внешней production-инфраструктурой:
-
-- `DurableBlobProvider` отвечает за durable object/secret storage;
-- `EnvelopeCryptoProvider` отвечает за audited KMS/envelope cryptography;
-- object key строится только из валидированного opaque subject key;
-- внешний crypto provider обязан объявить `key_reference` и `algorithm_id`;
-- `build_production_auth_store()` fail-closed, если storage или crypto adapter не прошёл production gate.
-
-Сам репозиторий не реализует production cipher и не хранит encryption keys.
-
 ### `authorization_coordinator.py`
 
 Отдельный trusted Connect/Auth state machine. Он не расширяет model-facing quota tool.
@@ -100,6 +88,34 @@ Coordinator:
 
 Текущая реализация является pinned-worker core. Multi-replica routing/lease для живого authorization process остаётся отдельным deployment gate.
 
+### `auth_concurrency.py`
+
+Сериализует authorization, quota read и revoke по одному opaque subject key. Это защищает managed refresh state от lost-update race.
+
+```text
+subject A quota read ─┐
+subject A refresh     ├─ one subject lease
+subject A revoke     ─┘
+
+subject B operation     independent lease
+```
+
+`InProcessSubjectLeaseProvider` нужен только для CI/single-worker P1 и имеет `production_safe=False`. Production должен предоставить audited cross-worker lease provider; при таймауте операция fail-closed и не продолжает работу без блокировки.
+
+### `production_vault.py`
+
+Связывает sealed lifecycle с внешней production-инфраструктурой:
+
+- `DurableBlobProvider` отвечает за durable object/secret storage;
+- `EnvelopeCryptoProvider` отвечает за audited KMS/envelope cryptography;
+- `SubjectLeaseProvider` отвечает за cross-worker serialization;
+- durable provider обязан подтверждать atomic object replacement;
+- object key строится только из валидированного opaque subject key;
+- crypto provider обязан объявить `key_reference` и `algorithm_id`;
+- `build_production_auth_store()` fail-closed, если хотя бы один обязательный provider не production-safe.
+
+Сам репозиторий не реализует production cipher, не хранит encryption keys и не реализует самодельный distributed lock.
+
 ### `quota_service.py`
 
 Фиксирует trust boundary между ChatGPT Plugin transport и quota backend:
@@ -117,9 +133,9 @@ Machine-readable model-facing contract. `inputSchema` пуст и запреща
 
 ## Почему seal/unseal подходит official Codex
 
-В official file-mode managed auth хранится в `$CODEX_HOME/auth.json`; Codex сам обновляет этот record при refresh. Поэтому backend не обязан держать постоянный plaintext Codex home. Он materialize один private auth file на время операции и reseal обновлённую версию после успешного выхода.
+В official file-mode managed auth хранится в `$CODEX_HOME/auth.json`; Codex сам обновляет этот record при refresh. Backend не обязан держать постоянный plaintext Codex home: он materialize один private auth file на время операции и reseal обновлённую версию после успешного выхода.
 
-Это решение всё равно требует настоящего production KMS/secret adapter, concurrency/crash review и реального Connect/Auth E2E.
+Per-subject lease нужен поверх этого lifecycle, потому что два одновременных materialize одного subject иначе могут начать с одной версии auth state и позже перезаписать друг друга.
 
 ## Что ещё отсутствует
 
@@ -128,12 +144,12 @@ Release gates:
 1. ChatGPT Web Connect/Auth E2E;
 2. audited subject-to-account binding;
 3. реальный audited KMS/secret provider deployment;
-4. encryption key rotation policy;
-5. token refresh/revocation/logout E2E;
-6. concurrent quota calls for one subject;
-7. crash/partial-write recovery;
+4. реальный audited cross-worker lease provider;
+5. encryption key rotation policy;
+6. token refresh/revocation/logout E2E;
+7. crash/partial-write recovery на выбранном durable backend;
 8. multi-replica authorization routing/lease;
-9. cross-subject isolation under load;
+9. cross-subject isolation под нагрузкой;
 10. threat model и security review.
 
 До закрытия этих gates feature-ветка остаётся development-only.
@@ -146,6 +162,7 @@ python3 plugin/subject_store.py
 python3 plugin/quota_service.py
 python3 plugin/sealed_auth_store.py
 python3 plugin/authorization_coordinator.py
+python3 plugin/auth_concurrency.py
 python3 plugin/production_vault.py
 python3 scripts/validate_repo.py
 ```
