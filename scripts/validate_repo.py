@@ -11,7 +11,7 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MIN_TESTS = 170
+MIN_TESTS = 190
 
 REQUIRED = [
     "SKILL.md",
@@ -42,12 +42,17 @@ REQUIRED = [
     "tests/TEST_CASES_V2_2.md",
     "tests/TEST_CASES_V3_0.md",
     "tests/TEST_CASES_V3_0_SECURITY.md",
+    "tests/TEST_CASES_V3_0_CONCURRENCY.md",
     "scripts/weekly_quota_controller.py",
     "scripts/quota_telemetry.py",
     "plugin/__init__.py",
     "plugin/quota_backend.py",
     "plugin/subject_store.py",
     "plugin/quota_service.py",
+    "plugin/sealed_auth_store.py",
+    "plugin/authorization_coordinator.py",
+    "plugin/auth_concurrency.py",
+    "plugin/production_vault.py",
     "plugin/get_quota_snapshot.tool.json",
     "plugin/README.md",
     "experiments/p0_headless_quota_probe.py",
@@ -303,14 +308,22 @@ if version and not re.search(rf"^##\s+{re.escape(version)}\b", changelog, re.M):
 if "server-side Plus quota path" not in changelog:
     errors.append("CHANGELOG.md missing v3 server-side Plus quota proof")
 
-# Number all regression files as one contiguous suite. This avoids validator
-# edits whenever a new v3 regression shard is added.
+# Regression shards are independent files. File naming/order must not affect the
+# global numbering contract, so validate each shard locally and the union globally.
 test_files = sorted((ROOT / "tests").glob("TEST_CASES*.md"))
-raw_tests = "\n".join(path.read_text(encoding="utf-8") for path in test_files)
-numbers = [int(n) for n in re.findall(r"^## Test (\d+)\b", raw_tests, re.M)]
+all_numbers: list[int] = []
+for path in test_files:
+    file_numbers = [int(n) for n in re.findall(r"^## Test (\d+)\b", path.read_text(encoding="utf-8"), re.M)]
+    if file_numbers != sorted(file_numbers):
+        errors.append(f"{path.relative_to(ROOT)} test numbers are not increasing")
+    all_numbers.extend(file_numbers)
+
+numbers = sorted(all_numbers)
 if not numbers:
     errors.append("no numbered tests found")
 else:
+    if len(numbers) != len(set(numbers)):
+        errors.append("duplicate regression test numbers found across shards")
     expected = list(range(1, max(numbers) + 1))
     if numbers != expected:
         errors.append("tests are not numbered contiguously from 1 across all regression files")
@@ -443,6 +456,42 @@ for needle in [
     if needle not in quota_service:
         errors.append(f"quota service missing trust-boundary marker: {needle}")
 
+authorization = read("plugin/authorization_coordinator.py")
+for needle in [
+    "AuthorizationCoordinator",
+    "WAITING_USER",
+    "AlreadyAuthorized",
+    "AuthorizationNotFound",
+    "authorization worker did not stop before revoke",
+    "record.subject = \"\"",
+]:
+    if needle not in authorization:
+        errors.append(f"authorization coordinator missing state-machine marker: {needle}")
+
+concurrency = read("plugin/auth_concurrency.py")
+for needle in [
+    "SubjectLeaseProvider",
+    "InProcessSubjectLeaseProvider",
+    "production_safe = False",
+    "LeaseProtectedAuthStore",
+    'purpose="quota-read"',
+    'purpose="revoke"',
+]:
+    if needle not in concurrency:
+        errors.append(f"auth concurrency layer missing marker: {needle}")
+
+vault = read("plugin/production_vault.py")
+for needle in [
+    "DurableBlobProvider",
+    "EnvelopeCryptoProvider",
+    "atomic_replace",
+    "SubjectLeaseProvider",
+    "build_production_auth_store",
+    "production requires a production-safe cross-worker subject lease provider",
+]:
+    if needle not in vault:
+        errors.append(f"production vault adapter missing marker: {needle}")
+
 
 def run_module_self_test(path: Path, module_name: str, label: str) -> None:
     if not path.is_file():
@@ -465,6 +514,10 @@ for path, module_name, label in [
     (ROOT / "plugin" / "quota_backend.py", "quota_plugin_backend_validation", "quota Plugin backend"),
     (ROOT / "plugin" / "subject_store.py", "subject_auth_store_validation", "subject auth store"),
     (ROOT / "plugin" / "quota_service.py", "quota_service_validation", "quota service"),
+    (ROOT / "plugin" / "sealed_auth_store.py", "sealed_auth_store_validation", "sealed auth store"),
+    (ROOT / "plugin" / "authorization_coordinator.py", "authorization_coordinator_validation", "authorization coordinator"),
+    (ROOT / "plugin" / "auth_concurrency.py", "auth_concurrency_validation", "auth concurrency"),
+    (ROOT / "plugin" / "production_vault.py", "production_vault_validation", "production vault adapter"),
 ]:
     run_module_self_test(path, module_name, label)
 
@@ -495,5 +548,5 @@ if errors:
 
 print(
     f"Repository validation OK — openai-work-codex-regulator v{version} "
-    f"({len(numbers)} tests, Web-only Plugin telemetry + subject isolation + balanced controller present)"
+    f"({len(numbers)} tests, Web-only Plugin telemetry + sealed auth + subject serialization + balanced controller present)"
 )
