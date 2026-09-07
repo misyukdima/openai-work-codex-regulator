@@ -1,133 +1,159 @@
-# Autonomous quota telemetry for ChatGPT-first orchestration
+# Autonomous quota telemetry for ChatGPT Web
 
 **Target version:** v3.0  
 **Status:** normative development contract
 
-v3.0 removes routine quota bookkeeping from the user. The regulator should acquire current Work/Codex allowance automatically whenever the active surface can access a supported telemetry tool. Manual quota input remains accepted, but only as a fallback when automatic telemetry is unavailable or cannot be trusted.
+v3.0 removes routine Work/Codex quota bookkeeping from the user while keeping the regulator inside ChatGPT Web.
 
-## 1. Product intent
+## 1. Runtime contract
 
 ```text
-CHATGPT_PRIMARY_ORCHESTRATOR=YES
+SKILL_RUNTIME=CHATGPT_WEB_ONLY
+CONTROL_PLANE_OWNER=CHAT
+WORK_CODEX_ROLE=EXECUTION_PLANE
 AUTO_QUOTA_TELEMETRY=DEFAULT
 MANUAL_QUOTA_INPUT=FALLBACK_ONLY
+USER_SETUP_AFTER_ZIP=NONE
+```
+
+The skill does not run directly inside Work or Codex. Those surfaces receive self-contained execution packets from ChatGPT.
+
+## 2. Normal user flow
+
+```text
+GitHub Release ZIP
+  ↓
+attach in ChatGPT Web
+  ↓
+ChatGPT loads regulator instructions
+  ↓
+ordinary Chat work
+  ↓
+quota-sensitive decision
+  ↓
+Plugin connected?
+  ├─ yes → get_quota_snapshot()
+  └─ no  → ChatGPT Connect/Auth
+                  ↓
+             one-time authorization
+                  ↓
+             get_quota_snapshot()
+```
+
+Do not front-load authorization if the current task does not need quota state.
+
+```text
+PLUGIN_AUTH=JUST_IN_TIME
+LOCAL_SOFTWARE_REQUIRED=NO
+OS_DEPENDENCY=NO
 ZERO_MAINTENANCE_USER_SETUP=REQUIRED
 ```
 
-The normal user workflow is:
+## 3. Cloud boundary
 
-```text
-user goal
-  ↓
-ChatGPT regulator
-  ↓
-automatic quota refresh when needed
-  ↓
-v2.2 trajectory + burn controller
-  ↓
-Work / Codex admission and self-contained handoff
-```
-
-The user should not be asked to open Usage, copy percentages, calculate reset time or periodically resend quota state during ordinary operation.
-
-## 2. ChatGPT remains the preferred control plane
-
-The regulator continues to support direct invocation in Work or Codex, but the primary architecture is ChatGPT-first:
-
-```text
-ORCHESTRATION_MODE=<CHATGPT_PRIMARY|WORK_STANDALONE|CODEX_STANDALONE>
-CONTROL_PLANE_OWNER=<CHAT|WORK|CODEX>
-```
-
-When `ORCHESTRATION_MODE=CHATGPT_PRIMARY`:
-
-- Chat resolves routing, model/effort, quota admission, pace risk and project runway;
-- Work and Codex remain execution surfaces;
-- quota telemetry is input to Chat's decision, never a second controller;
-- downstream executors still receive self-contained packets and do not need this skill.
-
-## 3. Cloud/local boundary
-
-A browser/cloud ChatGPT session must never assume it can execute a local binary, read a local file or reach `127.0.0.1` on the user's computer.
+Browser/cloud ChatGPT cannot assume access to a user's local binary, filesystem or localhost.
 
 ```text
 CHAT_LOCALHOST_ASSUMPTION=FORBIDDEN
 CHAT_LOCAL_SHELL_ASSUMPTION=FORBIDDEN
 ```
 
-Therefore automatic telemetry for ChatGPT requires a Chat-accessible tool or connected app that exposes a sanitized current snapshot.
-
-Conceptually:
+The production telemetry path is remote and Chat-accessible:
 
 ```text
-local sensor
-   ↓
-sanitized snapshot
-   ↓
-remote/readable quota tool
-   ↓
-ChatGPT regulator
+ChatGPT Web
+  → Regulator Quota Plugin/App
+  → authenticated server-side backend
+  → official OpenAI Codex app-server
+  → account/rateLimits/read
+  → normalized snapshot
 ```
 
-The transport may evolve independently from the regulator. The skill depends on the normalized tool contract, not on one specific local implementation.
+A local Companion, CodexBar, MCP tunnel or OS service may exist in research history, but none is a production dependency for v3.0.
 
-## 4. Normalized quota tool
-
-Preferred tool contract:
+## 4. Canonical tool
 
 ```text
 get_quota_snapshot()
 ```
 
-Minimum successful result:
+The model supplies no identity or secret arguments. The connected app resolves the authenticated subject server-side.
+
+Minimum result:
 
 ```text
 ALLOWANCE_DOMAIN=WORK_CODEX
 SNAPSHOT_AT=<timestamp>
-QUOTA_TELEMETRY_SOURCE=<provider>
-QUOTA_TELEMETRY_FRESHNESS=<FRESH|STALE|UNKNOWN>
+QUOTA_TELEMETRY_SOURCE=OPENAI_CODEX_APP_SERVER
+QUOTA_TELEMETRY_STATE=<FRESH|STALE|UNAVAILABLE|CONFLICT|UNKNOWN>
 WEEKLY_METER_SEMANTICS=USED
-WEEKLY_USED=<percent>
-WEEKLY_RESET=<time|unknown>
+WEEKLY_USED=<percent|unknown>
+WEEKLY_RESET=<timestamp|unknown>
 FIVE_HOUR_USED=<percent|unknown>
-FIVE_HOUR_RESET=<time|unknown>
+FIVE_HOUR_RESET=<timestamp|unknown>
 ```
 
-Optional fields may include meter granularity, plan class, credits and provider confidence when they are available without exposing secrets or unnecessary personal data.
+Optional fields may include plan class, credits, additional windows and source health. The tool must not return OAuth tokens, cookies, bearer headers, raw auth files, private prompts or chat content.
 
-The tool must not return OAuth tokens, cookies, bearer headers, private prompts, chat content or raw authentication files.
+## 5. Window semantics
 
-## 5. Local sensors and providers
-
-The first reference provider is CodexBar-compatible telemetry because CodexBar can expose Codex usage in structured JSON and can use a read-only OAuth usage path.
-
-This is an implementation detail, not a permanent dependency:
-
-```text
-QUOTA_SENSOR=<CODEXBAR|OPENAI_DIRECT|OTHER|UNKNOWN>
-```
-
-The regulator must not require the user to understand or manually operate CodexBar. A future companion/plugin may bundle or replace the provider completely.
-
-For CodexBar-like payloads, window position is not semantic truth:
+Window position is not semantic truth:
 
 ```text
 RATE_WINDOW_POSITION_IS_NOT_SEMANTICS
 ```
 
-Classify by reported window duration:
+Classify by reported duration:
 
 ```text
 300 minutes   → FIVE_HOUR
 10080 minutes → WEEKLY
 other         → OTHER_WINDOW
+missing       → UNAVAILABLE
 ```
 
-Never assume `primary=5h` and `secondary=weekly`.
+`primary` and `secondary` may change position. A missing 5h window is not 0% usage. A missing weekly window is not a fresh week.
 
-## 6. Automatic refresh policy
+## 6. Proven P0
 
-Do not poll quota on every Chat message. Refresh when quota can materially affect a decision:
+On 2026-09-07 the feature branch completed a real server-side P0 against a ChatGPT Plus account.
+
+The ephemeral runner:
+
+1. used a pinned official OpenAI Codex CLI;
+2. launched `codex app-server` in isolated temporary auth storage;
+3. completed managed ChatGPT authorization;
+4. waited for `account/login/completed` and then authenticated `account/updated`;
+5. called `account/rateLimits/read`;
+6. received a Plus `codex` rate-limit snapshot;
+7. emitted only a sanitized proof;
+8. deleted temporary auth state.
+
+```text
+P0_SERVER_SIDE_PLUS_QUOTA=PROVEN
+```
+
+This proves acquisition feasibility. It does **not** approve a production credential-storage design.
+
+## 7. Auth readiness boundary
+
+The P0 exposed an important race in official app-server sequencing. `account/login/completed` can arrive before the new managed auth is reloaded into the account processor. A quota read at that instant may return authentication required.
+
+Production logic therefore waits for:
+
+```text
+account/login/completed(success=true)
+        ↓
+account/updated(authMode != null)
+        ↓
+account/rateLimits/read
+```
+
+Do not replace this readiness condition with an arbitrary sleep.
+
+## 8. Automatic refresh policy
+
+Refresh only when quota can change a decision:
 
 ```text
 AUTO_QUOTA_REFRESH=BEFORE_AGENTIC_PASS
@@ -137,98 +163,83 @@ AUTO_QUOTA_REFRESH=WHEN_SNAPSHOT_STALE
 AUTO_QUOTA_REFRESH=ON_RESET_OR_EPOCH_SUSPECTED
 ```
 
-Ordinary bounded Chat planning, explanation and review do not require a quota fetch unless the next decision depends on quota state.
+Ordinary Chat planning/review does not need a quota fetch on every turn.
 
-## 7. Freshness and failure
-
-Normalized state:
+## 9. Freshness and failure
 
 ```text
 QUOTA_TELEMETRY_STATE=<FRESH|STALE|UNAVAILABLE|CONFLICT|UNKNOWN>
 ```
 
-- `FRESH` — suitable for quota-sensitive admission;
-- `STALE` — may be shown for context but should be refreshed before a large class 2–4 pass;
-- `UNAVAILABLE` — automatic source cannot currently be read;
-- `CONFLICT` — telemetry contradicts a known reset/account epoch boundary;
-- `UNKNOWN` — semantics cannot be normalized safely.
+- `FRESH`: suitable for quota-sensitive admission.
+- `STALE`: refresh before a large class 2–4 pass.
+- `UNAVAILABLE`: source cannot currently provide the needed fact/window.
+- `CONFLICT`: snapshot contradicts known account/reset epoch state.
+- `UNKNOWN`: semantics cannot be normalized safely.
 
-If automatic telemetry fails, do not stop non-agentic Chat work. Use the progress-preserving fallback ladder. Ask the user for a manual first-party snapshot only when a quota-sensitive decision cannot be made safely without it.
+Failure of automatic telemetry does not stop safe Chat work. Manual first-party snapshot is the last fallback when the next quota-sensitive decision cannot be made safely otherwise.
 
 ```text
 MANUAL_QUOTA_INPUT_REQUIRED=NO
 MANUAL_QUOTA_INPUT_ACCEPTED=YES
 ```
 
-## 8. Pending burn
+## 10. Pending burn
 
-An unchanged meter immediately after a meaningful Work/Codex pass does not prove zero burn.
+Immediate unchanged meter after a meaningful pass does not prove zero burn when aggregate reporting may lag.
 
 ```text
-if post_pass_snapshot == pre_pass_snapshot and reporting_may_lag:
-    PENDING_BURN=YES
+POST_PASS_METER_STATE=PENDING
+PENDING_BURN=YES
 ```
 
-When a later fresh snapshot advances inside the same quota epoch, the aggregate delta can become an observed burn sample. Existing v2.2 compatibility/attribution rules still apply.
+A later fresh snapshot in the same epoch may resolve the aggregate delta under existing v2.2 compatibility/attribution rules.
 
-## 9. Reset and epoch handling
+## 11. Reset and epoch
 
-A confirmed reset, materially changed reset timestamp or allowance architecture change invalidates the old trajectory anchor.
+Confirmed reset, materially changed reset boundary or allowance architecture change invalidates the previous anchor.
 
 ```text
 QUOTA_EPOCH_EVENT=<NONE|RESET|PLAN_CHANGE|ALLOWANCE_CHANGE|UNKNOWN>
 ```
 
-Do not combine pre-reset anchor values with post-reset telemetry. Re-anchor the v2.2 controller from the new normalized snapshot.
+Never mix pre-reset trajectory values with post-reset telemetry.
 
-## 10. Standalone Work/Codex
+## 12. Read-only boundary
 
-When the regulator is invoked directly in a local environment that has shell/tool access, the same normalized contract may be fulfilled directly by a local adapter.
+Quota infrastructure may read current allowance facts. It must not:
+
+- buy credits;
+- trigger paid weekly reset;
+- mutate spending controls;
+- change Work/Codex permissions;
+- choose surface/model/admission;
+- expose auth material to the model;
+- silently bind one ChatGPT subject to another account;
+- reinterpret missing fields as known values.
 
 ```text
-CODEX_STANDALONE:
-local telemetry adapter → normalized snapshot → controller
-
-WORK_STANDALONE:
-available connected telemetry tool → normalized snapshot → controller
+QUOTA_PLUGIN=READ_ONLY
+PLUGIN_DECISION_AUTHORITY=NONE
+FALSE_PRECISION=FORBIDDEN
 ```
 
-Standalone support does not change the preferred ChatGPT-first architecture.
+## 13. Production credential lifecycle
 
-## 11. Zero-friction installation requirement
+P0 used ephemeral auth storage and deleted it. Production requires a separate audited lifecycle for each authenticated Plugin subject:
 
-The final v3.0 user experience is not considered complete if routine setup requires the user to:
+```text
+SUBJECT_ACCOUNT_BINDING_AUDITED=YES
+CREDENTIAL_ISOLATION_AUDITED=YES
+TOKEN_REFRESH_TESTED=YES
+TOKEN_REVOCATION_TESTED=YES
+LOGOUT_PATH_TESTED=YES
+```
 
-- open Terminal;
-- install Homebrew;
-- install or configure CodexBar separately;
-- edit JSON/YAML;
-- copy OAuth/API tokens;
-- configure localhost ports;
-- configure a tunnel manually;
-- understand MCP internals;
-- periodically resend quota values to ChatGPT.
+Raw credentials must never enter tool arguments, model-visible output, logs or analytics payloads.
 
-The intended product surface is one Regulator installation/setup flow with automatic health checks and repair guidance.
+## 14. Backward compatibility
 
-## 12. Security boundary
+If Plugin telemetry is unavailable, the v2.2 normalized manual snapshot remains a fallback. The trajectory, burn estimator, quality floor, 5h breaker, bounded future advance and self-contained handoff semantics remain unchanged.
 
-Telemetry infrastructure is a read-only sensor path.
-
-It must not:
-
-- buy credits or trigger paid resets;
-- mutate account settings;
-- expose auth material to ChatGPT;
-- expand Work/Codex permissions;
-- become an admission controller;
-- silently select a different account/workspace;
-- execute downloaded code as part of a quota read.
-
-The regulator remains the only component that applies quota/pace policy.
-
-## 13. Backward compatibility
-
-If automatic telemetry is unavailable, v3.0 falls back to the existing normalized manual snapshot contract. The v2.2 trajectory, burn estimator, quality floor, 5h breaker, bounded future advance and self-contained handoff semantics remain valid.
-
-This makes automatic telemetry a major usability/architecture upgrade without replacing the proven controller mathematics.
+Automatic telemetry changes acquisition and UX, not the proven controller mathematics.

@@ -1,98 +1,143 @@
 # Architecture
 
-## v3.0 ChatGPT-first control plane
+## v3.0: ChatGPT Web as the only control plane
 
-`v3.0` сохраняет проверенную математику `v2.2`, но меняет способ доставки quota state в оркестратор.
+The v3.0 skill runs in ChatGPT Web. Work and Codex do the execution work, but they do not load the regulator.
 
 ```text
 User goal
   ↓
-ChatGPT regulator (preferred control plane)
+ChatGPT Web + Regulator Skill
   ↓
-class / surface / gate / WHY_AGENTIC
+class / gate / surface / model
   ↓
 quota-sensitive decision?
   ├─ no  → continue Chat work
-  └─ yes → automatic quota telemetry
+  └─ yes → get_quota_snapshot()
+               ↓
+          Regulator Quota Plugin/App
+               ↓
+          server-side quota backend
+               ↓
+          official codex app-server
+               ↓
+          account/rateLimits/read
                ↓
           normalized Work/Codex snapshot
                ↓
-          quota epoch + absolute cumulative trajectory
+          v2.2 quota controller
                ↓
-          model/effort + B_SAFE + hard quality/safety gates
+          Work or Codex handoff
                ↓
-          quota risk of launch ↔ pace risk of defer
-                  equal priority (50/50)
-               ↓
-          LAUNCH_BASE / LAUNCH_WITH_ADVANCE /
-          PROGRESS_ALTERNATIVE / DEFER
-               ↓
-          self-contained executor packet
-               ↓
-          Work or Codex
-               ↓
-          evidence + post-pass telemetry refresh
+          evidence back to ChatGPT
 ```
 
 ## Product invariants
 
 ```text
+SKILL_RUNTIME=CHATGPT_WEB_ONLY
+ORCHESTRATION_MODE=CHATGPT_WEB
+CONTROL_PLANE_OWNER=CHAT
+WORK_CODEX_ROLE=EXECUTION_PLANE
 CHATGPT_PRIMARY_ORCHESTRATOR=YES
+HANDOFF_SELF_CONTAINED=YES
+EXECUTOR_SKILL_REQUIRED=NO
 AUTO_QUOTA_TELEMETRY=DEFAULT
 MANUAL_QUOTA_INPUT=FALLBACK_ONLY
-ZERO_MAINTENANCE_USER_SETUP=REQUIRED
+USER_SETUP_AFTER_ZIP=NONE
+PLUGIN_AUTH=JUST_IN_TIME
+LOCAL_SOFTWARE_REQUIRED=NO
+OS_DEPENDENCY=NO
 ```
 
-The regulator still supports direct invocation inside Work/Codex, but normal product architecture assumes Chat is the main orchestrator.
+There is no production standalone skill mode in Work or Codex.
 
-## Cloud/local boundary
+## Bootstrap and authorization
 
-A cloud/browser ChatGPT session cannot be designed around direct access to a local binary or localhost service.
+The intended user path is short:
+
+```text
+GitHub Release ZIP
+  ↓
+attach to ChatGPT Web
+  ↓
+normal work begins
+```
+
+Plugin authorization is deferred until quota actually affects a decision. If already connected, the read is silent from the user's point of view. If not, ChatGPT surfaces the normal Connect/Auth experience.
+
+The ZIP cannot grant itself account permissions. The Plugin/App owns the authenticated read boundary.
+
+## No local bridge
+
+The production architecture does not depend on the user's operating system.
 
 ```text
 CHAT_LOCALHOST_ASSUMPTION=FORBIDDEN
 CHAT_LOCAL_SHELL_ASSUMPTION=FORBIDDEN
+LOCAL_COMPANION_REQUIRED=NO
+CODEXBAR_USER_PREREQUISITE=NO
+LOCALHOST_REQUIRED=NO
 ```
 
-Therefore the ChatGPT-primary data path is:
+Earlier Companion/CodexBar/relay code on the feature branch is research history, not a release dependency.
+
+## Plugin is a sensor, not a controller
+
+The Plugin exposes one model-facing capability:
 
 ```text
-local quota sensor
-        ↓
-sanitize / normalize
-        ↓
-Chat-accessible connected app/tool
-        ↓
 get_quota_snapshot()
-        ↓
-ChatGPT regulator
 ```
 
-The local sensor and transport are implementation details behind one normalized contract. They may change without rewriting the quota controller.
+It supplies facts such as used percentage, reset time, plan class, credits state and additional windows when the source returns them. It does not decide:
 
-## Telemetry is a sensor, not a controller
+- Work vs Codex;
+- model/effort;
+- future advance;
+- pace risk;
+- purchase/reset actions;
+- project priority.
 
 ```text
-QUOTA_SENSOR=<CODEXBAR|OPENAI_DIRECT|OTHER|UNKNOWN>
+QUOTA_PLUGIN=READ_ONLY
+PLUGIN_DECISION_AUTHORITY=NONE
 ```
 
-The provider supplies facts such as used percentage, reset boundaries and timestamps. It does not decide:
+## Proven server-side acquisition
 
-- whether a pass launches;
-- whether future advance is justified;
-- which model/effort is sufficient;
-- how urgent the project is;
-- whether paid credits/reset should be used.
+P0 on 2026-09-07 proved the remote Plus path with official OpenAI Codex:
 
-Those decisions remain in the regulator control plane.
+```text
+managed ChatGPT authorization
+  ↓
+account/login/completed
+  ↓
+account/updated
+  ↓
+account/rateLimits/read
+  ↓
+Plus codex rate-limit snapshot
+```
 
-## Reference CodexBar adapter
+The `account/updated` step is important. The P0 discovered that login completion can precede managed auth reload; waiting for the account update removes that race without an arbitrary delay.
 
-The first adapter accepts CodexBar-compatible structured JSON through `scripts/quota_telemetry.py`.
+P0 used ephemeral credentials and deleted the temporary auth state. This proves quota acquisition, not production credential persistence.
 
-It intentionally does not authenticate to OpenAI itself, read raw auth files, purchase anything or call Work/Codex.
+## Server-side backend
 
-Window semantics are duration-based:
+`plugin/quota_backend.py` is the current backend core. It contains:
+
+- minimal JSON-RPC client for official `codex app-server`;
+- managed auth readiness handling;
+- read-only rate-limit retrieval;
+- `codex` bucket selection;
+- duration-based window normalization;
+- secret-field exclusion self-test.
+
+It deliberately does not expose a public production server yet. Identity, credential storage and ChatGPT Plugin transport are separate release gates.
+
+## Window semantics
 
 ```text
 RATE_WINDOW_POSITION_IS_NOT_SEMANTICS
@@ -100,16 +145,17 @@ RATE_WINDOW_POSITION_IS_NOT_SEMANTICS
 300 minutes   → FIVE_HOUR
 10080 minutes → WEEKLY
 other         → OTHER_WINDOW
+missing       → UNAVAILABLE
 ```
 
-This prevents `primary`/`secondary` field order from becoming a false invariant.
+The P0 itself returned a weekly window without a 5h window. That is a valid source state. Missing data remains missing.
 
 ## Automatic refresh lifecycle
 
 ```text
 BEFORE_AGENTIC_PASS
         ↓
-refresh if quota-sensitive
+fetch if quota-sensitive
         ↓
 admit / alternative / defer
         ↓
@@ -118,66 +164,63 @@ meaningful Work/Codex pass
 AFTER_MEANINGFUL_AGENTIC_PASS
         ↓
 updated meter?
-  ├─ yes → observed aggregate burn candidate
+  ├─ yes → aggregate burn candidate
   └─ no  → PENDING_BURN=YES
 ```
 
-Additional refresh occurs when snapshot is stale or reset/epoch drift is suspected.
-
-Polling on every Chat message is explicitly unnecessary.
+Also refresh on stale data, reset/epoch suspicion or when pending burn materially affects another large pass. Do not poll on every ordinary Chat turn.
 
 ## Manual fallback
-
-Manual quota input remains backwards-compatible but is no longer the normal workflow.
 
 ```text
 MANUAL_QUOTA_INPUT_REQUIRED=NO
 MANUAL_QUOTA_INPUT_ACCEPTED=YES
 ```
 
-If automatic telemetry is unavailable, the regulator should continue meaningful non-agentic Chat work. It requests a manual first-party snapshot only if an actual quota-sensitive gate cannot be resolved safely without one.
+If Plugin telemetry is unavailable, ChatGPT should continue useful planning/review/handoff first. Request a manual first-party snapshot only when the next quota-sensitive decision has no safe alternative.
 
-## Control plane / execution plane separation
+## Control plane and execution plane
 
 ```text
-ORCHESTRATION_MODE=<CHATGPT_PRIMARY|WORK_STANDALONE|CODEX_STANDALONE>
-CONTROL_PLANE_OWNER=<CHAT|WORK|CODEX>
-HANDOFF_SELF_CONTAINED=YES
-EXECUTOR_SKILL_REQUIRED=NO
+ChatGPT regulator
+  ↓
+quota / routing / model / admission
+  ↓
+self-contained execution packet
+  ↓
+Work or Codex
+  ↓
+execution + evidence
+  ↓
+ChatGPT regulator
 ```
 
-A downstream executor receives a complete bounded contract and never needs regulator installation just to understand the task.
+Quota trajectory, Plugin internals and risk scores stay out of ordinary executor prompts.
 
-Quota trajectory and telemetry fields are control-plane state and are not copied into ordinary Work/Codex prompts.
+## v2.2 controller remains authoritative
 
-## Absolute weekly trajectory
-
-The `v2.2` controller is retained unchanged conceptually.
-
-At one epoch anchor:
+At one quota epoch anchor:
 
 ```text
 U0 = weekly used at anchor
 H0 = hours to reset at anchor
 ```
 
-A deterministic cumulative target `T(H)` defines how much allowance could have been spent when `H` hours remain. Because all future decisions refer to the same anchor, recomputing after a pass cannot create another full daily budget.
-
-Normal launch headroom looks 24h forward:
+Normal 24h look-ahead:
 
 ```text
 BASE_LOOKAHEAD_HOURS = 24
 BASE_ACTION_HEADROOM_PP = T(H-24h) - actual_spend - reservations - meter_buffer
 ```
 
-Bounded future advance looks at most 72h forward:
+Maximum bounded advance:
 
 ```text
 MAX_ADVANCE_HOURS = 72
 MAX_ADVANCE_HEADROOM_PP = T(H-72h) - actual_spend - reservations - meter_buffer
 ```
 
-The 24h quantity remains a pacing target, not a hard sleep timer.
+This is one cumulative trajectory. Recomputing after a pass cannot mint a new daily budget.
 
 ## Balanced admission
 
@@ -187,104 +230,57 @@ Hard constraints first:
 safety
 permissions / authorization
 QUALITY_FLOOR=NON_NEGOTIABLE
-5h circuit breaker
+confirmed 5h breaker
 ```
 
-Then equal priority:
+Then:
 
 ```text
 BALANCED_PRIORITY=QUOTA_50_PACE_50
 ```
 
-If a pass needs future advance:
+Future advance is allowed only inside the bounded horizon and only when quota risk of launch is no greater than workflow risk of deferral.
+
+## Credential architecture
+
+The production backend must bind ChatGPT Plugin subject to the authorized OpenAI/Codex account outside model arguments.
+
+Required release properties:
 
 ```text
-QUOTA_RISK_IF_LAUNCH = needed_advance / borrowable_extra
-PACE_RISK_IF_DEFER = 0..1
+SUBJECT_ACCOUNT_BINDING_AUDITED=YES
+CREDENTIAL_ISOLATION_AUDITED=YES
+ENCRYPTION_AT_REST_REQUIRED=YES
+TOKEN_REFRESH_TESTED=YES
+TOKEN_REVOCATION_TESTED=YES
+LOGOUT_PATH_TESTED=YES
+CROSS_SUBJECT_READ=FORBIDDEN
 ```
 
-Launch with advance when quota risk is no greater than pace risk and the pass remains inside the bounded advance horizon.
-
-## Reset / epoch handling
-
-Automatic telemetry makes reset detection easier, but the invariant remains strict:
-
-```text
-confirmed reset or material reset-boundary change
-        ↓
-invalidate old trajectory anchor
-        ↓
-new QUOTA_EPOCH_ID
-```
-
-Never combine pre-reset anchor values with post-reset telemetry.
-
-## Progress-preserving fallback
-
-If full agentic launch loses the balanced comparison, or automatic telemetry is temporarily unavailable, the regulator searches for useful work that does not consume the same shared pool before pure waiting: Chat planning/review/handoff, accepted-evidence reuse, quality-preserving split, independent work or an already-approved non-shared surface.
-
-## Standalone modes
-
-The same normalized quota contract is portable:
-
-```text
-CODEX_STANDALONE
-  local telemetry adapter
-      ↓
-  normalized snapshot
-      ↓
-  controller
-```
-
-```text
-WORK_STANDALONE
-  available connected telemetry tool
-      ↓
-  normalized snapshot
-      ↓
-  controller
-```
-
-Standalone support does not demote ChatGPT from the preferred product architecture.
-
-## Zero-maintenance onboarding boundary
-
-Final v3.0 is not release-ready while ordinary setup requires Terminal, Homebrew, separate CodexBar setup, token copy/paste, manual JSON/YAML, localhost/tunnel configuration or periodic quota messages.
-
-This criterion is architectural, not cosmetic.
-
-## Model architecture
-
-```text
-MODEL_PROFILE=TIERED
-  MODEL_TIER=LUNA|TERRA|SOL
-
-MODEL_PROFILE=ASTRA
-  MODEL_TIER=N/A
-```
-
-Quota pressure cannot force a model below minimum sufficient quality.
+The model never receives raw credentials.
 
 ## Normative layers
 
-- `SKILL.md` — executable synthesis.
-- `references/01` — routing and control-plane ownership.
-- `references/02` — shared allowance / credits / reset facts.
-- `references/03` — class 0–4.
-- `references/04` — project runway / burn accounting.
-- `references/05` — Work/browser/actions/schedules.
-- `references/06` — Codex executor discipline.
-- `references/07` — failures/recovery.
-- `references/08` — model routing.
-- `references/09` — Astra execution.
-- `references/10` — balanced weekly quota + pace controller.
-- `references/11` — orchestration / self-contained handoff.
-- `references/12` — autonomous quota telemetry.
-- `references/SOURCE_MAP.md` — provenance.
+- `SKILL.md`: executable ChatGPT Web contract.
+- `references/01`–`11`: routing, risk, safety, controller and handoff rules retained from previous releases where compatible.
+- `references/12_AUTONOMOUS_QUOTA_TELEMETRY.md`: Web-only automatic quota semantics.
+- `references/13_CHATGPT_PLUGIN_AND_QUOTA_BACKEND.md`: Plugin/backend boundary.
+- `references/SOURCE_MAP.md`: provenance and time-sensitive facts.
 
 ## Executable references
 
-- `scripts/weekly_quota_controller.py` — anchored trajectory, burn estimator and balanced admission.
-- `scripts/quota_telemetry.py` — telemetry normalization and freshness/window classification.
+- `scripts/weekly_quota_controller.py`: anchored trajectory, burn estimator and balanced admission.
+- `scripts/quota_telemetry.py`: pure window/freshness normalization.
+- `plugin/quota_backend.py`: official Codex server-side quota backend core.
 
-Repository validation imports both and runs deterministic self-tests.
+CI runs deterministic self-tests for these components without requiring user credentials.
+
+## Release boundary
+
+The feature branch is not ready for `main` until a real ChatGPT Web flow completes:
+
+```text
+ZIP → ChatGPT Web → Connect/Auth → get_quota_snapshot() → controller → handoff
+```
+
+That path must pass security review, cross-user isolation tests and credential refresh/revoke tests before Pull Request.

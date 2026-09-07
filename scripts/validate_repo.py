@@ -1,52 +1,92 @@
 #!/usr/bin/env python3
 """Repository validator for openai-work-codex-regulator v3.x."""
+
+from __future__ import annotations
+
 from pathlib import Path
 import importlib.util
 import json
 import re
 import sys
 
+
 ROOT = Path(__file__).resolve().parents[1]
 
 REQUIRED = [
-    "SKILL.md", "README.md", "VERSION", "CHANGELOG.md", "SECURITY.md", "CONTRIBUTING.md", ".gitattributes",
-    "docs/USAGE.md", "docs/ARCHITECTURE.md", "docs/RELEASE_PROCESS.md",
-    "references/01_SURFACE_ROUTING.md", "references/02_SHARED_QUOTA_AND_CREDITS.md",
-    "references/03_TASK_CLASSIFICATION.md", "references/04_RUNWAY_AND_BURN.md",
-    "references/05_WORK_BROWSER_AND_ACTIONS.md", "references/06_CODEX_TECHNICAL_WORK.md",
-    "references/07_FAILURES_AND_RECOVERY.md", "references/08_MODEL_TIER_ROUTING.md",
-    "references/09_ASTRA_EXECUTION.md", "references/10_WEEKLY_QUOTA_CONTROLLER.md",
-    "references/11_ORCHESTRATION_AND_HANDOFF.md", "references/12_AUTONOMOUS_QUOTA_TELEMETRY.md",
-    "references/13_COMPANION_AND_CHAT_BRIDGE.md", "references/SOURCE_MAP.md",
-    "tests/TEST_CASES.md", "tests/TEST_CASES_V2_2.md", "tests/TEST_CASES_V3_0.md",
-    "scripts/weekly_quota_controller.py", "scripts/quota_telemetry.py",
-    "companion/quota_companion.py", "companion/macos/Package.swift",
-    "companion/macos/Sources/RegulatorCompanion/main.swift",
-    "relay/quota_relay.py", "relay/get_quota_snapshot.tool.json",
-    ".github/CODEOWNERS", ".github/PULL_REQUEST_TEMPLATE.md", ".github/ISSUE_TEMPLATE/bug.md",
-    ".github/ISSUE_TEMPLATE/rule-change.md", ".github/workflows/validate.yml", ".github/workflows/release.yml",
+    "SKILL.md",
+    "README.md",
+    "VERSION",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    ".gitattributes",
+    "docs/USAGE.md",
+    "docs/ARCHITECTURE.md",
+    "docs/RELEASE_PROCESS.md",
+    "references/01_SURFACE_ROUTING.md",
+    "references/02_SHARED_QUOTA_AND_CREDITS.md",
+    "references/03_TASK_CLASSIFICATION.md",
+    "references/04_RUNWAY_AND_BURN.md",
+    "references/05_WORK_BROWSER_AND_ACTIONS.md",
+    "references/06_CODEX_TECHNICAL_WORK.md",
+    "references/07_FAILURES_AND_RECOVERY.md",
+    "references/08_MODEL_TIER_ROUTING.md",
+    "references/09_ASTRA_EXECUTION.md",
+    "references/10_WEEKLY_QUOTA_CONTROLLER.md",
+    "references/11_ORCHESTRATION_AND_HANDOFF.md",
+    "references/12_AUTONOMOUS_QUOTA_TELEMETRY.md",
+    "references/13_CHATGPT_PLUGIN_AND_QUOTA_BACKEND.md",
+    "references/SOURCE_MAP.md",
+    "tests/TEST_CASES.md",
+    "tests/TEST_CASES_V2_2.md",
+    "tests/TEST_CASES_V3_0.md",
+    "scripts/weekly_quota_controller.py",
+    "scripts/quota_telemetry.py",
+    "plugin/__init__.py",
+    "plugin/quota_backend.py",
+    "plugin/get_quota_snapshot.tool.json",
+    "plugin/README.md",
+    "experiments/p0_headless_quota_probe.py",
+    ".github/CODEOWNERS",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    ".github/ISSUE_TEMPLATE/bug.md",
+    ".github/ISSUE_TEMPLATE/rule-change.md",
+    ".github/workflows/validate.yml",
+    ".github/workflows/release.yml",
 ]
+
+MIN_TESTS = 160
 
 SKILL_INVARIANTS = [
     "name: openai-work-codex-regulator",
+    "SKILL_RUNTIME=CHATGPT_WEB_ONLY",
+    "ORCHESTRATION_MODE=CHATGPT_WEB",
+    "CONTROL_PLANE_OWNER=CHAT",
+    "WORK_CODEX_ROLE=EXECUTION_PLANE",
     "ONE_GATE = ONE_PRIMARY_SURFACE",
     "QUALITY_FLOOR=NON_NEGOTIABLE",
     "BALANCED_PRIORITY=QUOTA_50_PACE_50",
     "HANDOFF_SELF_CONTAINED=YES",
     "EXECUTOR_SKILL_REQUIRED=NO",
-    "CONTROL_PLANE_OWNER=<CHAT|WORK|CODEX>",
     "CHATGPT_PRIMARY_ORCHESTRATOR=YES",
     "AUTO_QUOTA_TELEMETRY=DEFAULT",
     "MANUAL_QUOTA_INPUT=FALLBACK_ONLY",
     "ZERO_MAINTENANCE_USER_SETUP=REQUIRED",
+    "USER_SETUP_AFTER_ZIP=NONE",
+    "PLUGIN_AUTH=JUST_IN_TIME",
+    "LOCAL_SOFTWARE_REQUIRED=NO",
+    "OS_DEPENDENCY=NO",
     "CHAT_LOCALHOST_ASSUMPTION=FORBIDDEN",
     "CHAT_LOCAL_SHELL_ASSUMPTION=FORBIDDEN",
     "QUOTA_TOOL=get_quota_snapshot",
-    "QUOTA_TELEMETRY_STATE=<FRESH|STALE|UNAVAILABLE|CONFLICT|UNKNOWN>",
+    "QUOTA_PLUGIN=READ_ONLY",
+    "PLUGIN_DECISION_AUTHORITY=NONE",
+    "RATE_WINDOW_POSITION_IS_NOT_SEMANTICS",
+    "missing       → UNAVAILABLE",
+    "P0_SERVER_SIDE_PLUS_QUOTA=PROVEN",
+    "FALSE_PRECISION=FORBIDDEN",
     "PAID_CREDITS_ALLOWED=NO",
     "PAID_WEEKLY_RESET_ALLOWED=NO",
-    "ALLOWANCE_DOMAIN=<WORK_CODEX|CHAT_PRO|API|UNKNOWN>",
-    "WEEKLY_METER_SEMANTICS=<USED|REMAINING|UNKNOWN>",
     "QUOTA_EPOCH_ID",
     "TRAJECTORY_ANCHOR_WEEKLY_USED_PP",
     "BASE_ACTION_HEADROOM_PP",
@@ -57,47 +97,56 @@ SKILL_INVARIANTS = [
     "MEANINGFUL_PROGRESS_WITHOUT_AGENTIC",
     "BURN_ESTIMATE_WEEKLY_PP",
     "PENDING_BURN",
-    "WORK_CLOUD=ON|OFF|UNKNOWN",
     "MODEL_PROFILE=<TIERED|ASTRA|OTHER|UNKNOWN>",
     "MODEL_TIER=<LUNA|TERRA|SOL|N/A|OTHER|UNKNOWN>",
     "ASTRA_JUSTIFIED=YES",
-    "CODEX_CLIENT_ASTRA_READY=YES|NO|UNKNOWN|N/A",
     "INJECTION_ATTEMPT",
     "Downloading ≠ permission to execute",
-    "RATE_WINDOW_POSITION_IS_NOT_SEMANTICS",
     "SURFACE: CHATGPT_WORK",
     "SURFACE: CODEX",
     "STOP AFTER REPORT",
-    "git add .",
-    "CHAT_BOUNDED_WEB",
-    "WHY_AGENTIC",
-    "VALUE_OUTPUT",
 ]
 
-ROUTING_INVARIANTS = [
-    "USER_SURFACE_OVERRIDE=YES",
+TELEMETRY_INVARIANTS = [
+    "SKILL_RUNTIME=CHATGPT_WEB_ONLY",
     "CONTROL_PLANE_OWNER=CHAT",
-    "HANDOFF_SELF_CONTAINED=YES",
-    "EXECUTOR_SKILL_REQUIRED=NO",
-    "MEANINGFUL_PROGRESS_WITHOUT_AGENTIC",
+    "AUTO_QUOTA_TELEMETRY=DEFAULT",
+    "MANUAL_QUOTA_INPUT=FALLBACK_ONLY",
+    "USER_SETUP_AFTER_ZIP=NONE",
+    "PLUGIN_AUTH=JUST_IN_TIME",
+    "LOCAL_SOFTWARE_REQUIRED=NO",
+    "OS_DEPENDENCY=NO",
+    "CHAT_LOCALHOST_ASSUMPTION=FORBIDDEN",
+    "CHAT_LOCAL_SHELL_ASSUMPTION=FORBIDDEN",
+    "get_quota_snapshot()",
+    "RATE_WINDOW_POSITION_IS_NOT_SEMANTICS",
+    "300 minutes   → FIVE_HOUR",
+    "10080 minutes → WEEKLY",
+    "missing       → UNAVAILABLE",
+    "P0_SERVER_SIDE_PLUS_QUOTA=PROVEN",
+    "account/updated",
+    "account/rateLimits/read",
+    "QUOTA_PLUGIN=READ_ONLY",
+    "PLUGIN_DECISION_AUTHORITY=NONE",
 ]
 
-MODEL_ROUTER_INVARIANTS = [
-    "MODEL_PROFILE=<TIERED|ASTRA|OTHER|UNKNOWN>",
-    "MODEL_TIER=<LUNA|TERRA|SOL|N/A|OTHER|UNKNOWN>",
-    "LUNA — economy / high-volume routine work",
-    "TERRA — balanced default",
-    "SOL — quality-first consequential synthesis",
-    "ASTRA_JUSTIFIED=YES",
-    "WHY_MAX",
-    "FAST_REQUIRED=YES",
-    "Astra is not a fourth tier",
-]
-
-ASTRA_INVARIANTS = [
-    "ASTRA_JUSTIFIED=YES", "ASTRA_SCOPE_BOUND", "ALLOWANCE_DOMAIN=WORK_CODEX", "CODEX_CLIENT_ASTRA_READY",
-    "STEERING_SCOPE_EFFECT", "SAFETY_STATE=<NORMAL|PAUSED_FOR_REVIEW|BLOCKED|UNKNOWN>",
-    "CYBER_SCOPE_AUTHORIZATION", "LONG_CONTEXT_JUSTIFIED=YES", "ONE_GATE = ONE_PRIMARY_SURFACE",
+PLUGIN_INVARIANTS = [
+    "CHATGPT_CONTROL_PLANE=YES",
+    "SKILL_RUNTIME=CHATGPT_WEB_ONLY",
+    "QUOTA_PLUGIN=READ_ONLY",
+    "PLUGIN_DECISION_AUTHORITY=NONE",
+    "LOCAL_COMPANION_REQUIRED=NO",
+    "CODEXBAR_USER_PREREQUISITE=NO",
+    "LOCALHOST_REQUIRED=NO",
+    "OS_DEPENDENCY=NO",
+    "get_quota_snapshot()",
+    "SUBJECT_ACCOUNT_BINDING_AUDITED=YES",
+    "CROSS_SUBJECT_READ=FORBIDDEN",
+    "SILENT_ACCOUNT_SWITCH=FORBIDDEN",
+    "CREDENTIAL_ISOLATION_AUDITED=YES",
+    "GENERIC_CODEX_RPC_TOOL=ABSENT",
+    "account/rateLimits/read",
+    "RATE_WINDOW_POSITION_IS_NOT_SEMANTICS",
 ]
 
 CONTROLLER_INVARIANTS = [
@@ -121,7 +170,6 @@ CONTROLLER_INVARIANTS = [
 ]
 
 HANDOFF_INVARIANTS = [
-    "CONTROL_PLANE_OWNER=<CHAT|WORK|CODEX>",
     "HANDOFF_SELF_CONTAINED=YES",
     "EXECUTOR_SKILL_REQUIRED=NO",
     "Control-plane-only state",
@@ -129,40 +177,36 @@ HANDOFF_INVARIANTS = [
     "EFFICIENCY_POSTURE=MINIMIZE_WASTE_WITHOUT_QUALITY_LOSS",
 ]
 
-TELEMETRY_INVARIANTS = [
-    "CHATGPT_PRIMARY_ORCHESTRATOR=YES",
-    "AUTO_QUOTA_TELEMETRY=DEFAULT",
-    "MANUAL_QUOTA_INPUT=FALLBACK_ONLY",
-    "ZERO_MAINTENANCE_USER_SETUP=REQUIRED",
-    "CHAT_LOCALHOST_ASSUMPTION=FORBIDDEN",
-    "CHAT_LOCAL_SHELL_ASSUMPTION=FORBIDDEN",
-    "get_quota_snapshot()",
-    "RATE_WINDOW_POSITION_IS_NOT_SEMANTICS",
-    "300 minutes   → FIVE_HOUR",
-    "10080 minutes → WEEKLY",
-    "QUOTA_TELEMETRY_STATE=<FRESH|STALE|UNAVAILABLE|CONFLICT|UNKNOWN>",
+ROUTING_INVARIANTS = [
+    "USER_SURFACE_OVERRIDE=YES",
+    "CONTROL_PLANE_OWNER=CHAT",
+    "HANDOFF_SELF_CONTAINED=YES",
+    "EXECUTOR_SKILL_REQUIRED=NO",
+    "MEANINGFUL_PROGRESS_WITHOUT_AGENTIC",
 ]
 
-BRIDGE_INVARIANTS = [
-    "CHATGPT_PRIMARY_ORCHESTRATOR=YES",
-    "CHAT_LOCALHOST_ASSUMPTION=FORBIDDEN",
-    "REMOTE_CHAT_TELEMETRY_PATH=REQUIRED",
-    "ZERO_MAINTENANCE_USER_SETUP=REQUIRED",
-    "MANUAL_QUOTA_INPUT=FALLBACK_ONLY",
-    "COMPANION_ROLE=SENSOR_TRANSPORT_ONLY",
-    "SENSOR_IMPLEMENTATION=PLUGGABLE",
-    "CODEXBAR_USER_PREREQUISITE=NO",
-    "RELAY_ROLE=READ_ONLY_TELEMETRY_CACHE",
-    "get_quota_snapshot()",
+MODEL_ROUTER_INVARIANTS = [
+    "MODEL_PROFILE=<TIERED|ASTRA|OTHER|UNKNOWN>",
+    "MODEL_TIER=<LUNA|TERRA|SOL|N/A|OTHER|UNKNOWN>",
+    "LUNA — economy / high-volume routine work",
+    "TERRA — balanced default",
+    "SOL — quality-first consequential synthesis",
+    "ASTRA_JUSTIFIED=YES",
+    "WHY_MAX",
+    "FAST_REQUIRED=YES",
+    "Astra is not a fourth tier",
 ]
 
-NATIVE_COMPANION_INVARIANTS = [
-    "KeychainStore",
-    "Подключить ChatGPT",
-    'Bundle.main.url(forAuxiliaryExecutable: "CodexBarCLI")',
-    '"--source", "oauth"',
-    "NSWorkspace.shared.open(pairing.connectURL)",
-    "Timer.scheduledTimer(withTimeInterval: 300",
+ASTRA_INVARIANTS = [
+    "ASTRA_JUSTIFIED=YES",
+    "ASTRA_SCOPE_BOUND",
+    "ALLOWANCE_DOMAIN=WORK_CODEX",
+    "CODEX_CLIENT_ASTRA_READY",
+    "STEERING_SCOPE_EFFECT",
+    "SAFETY_STATE=<NORMAL|PAUSED_FOR_REVIEW|BLOCKED|UNKNOWN>",
+    "CYBER_SCOPE_AUTHORIZATION",
+    "LONG_CONTEXT_JUSTIFIED=YES",
+    "ONE_GATE = ONE_PRIMARY_SURFACE",
 ]
 
 REQUIRED_SOURCES = [
@@ -184,21 +228,29 @@ REQUIRED_SOURCES = [
     "https://openai.com/index/safety-overview-gpt-6-astra/",
     "https://developers.openai.com/api/docs/models/gpt-6-astra",
     "https://developers.openai.com/api/docs/guides/latest-model",
+    "https://github.com/openai/codex",
 ]
 
-MIN_TESTS = 160
 GENERATION_NEUTRAL_FILES = [
-    "SKILL.md", "references/01_SURFACE_ROUTING.md", "references/03_TASK_CLASSIFICATION.md",
-    "references/04_RUNWAY_AND_BURN.md", "references/05_WORK_BROWSER_AND_ACTIONS.md",
-    "references/06_CODEX_TECHNICAL_WORK.md", "references/07_FAILURES_AND_RECOVERY.md",
-    "references/10_WEEKLY_QUOTA_CONTROLLER.md", "references/11_ORCHESTRATION_AND_HANDOFF.md",
-    "references/12_AUTONOMOUS_QUOTA_TELEMETRY.md", "references/13_COMPANION_AND_CHAT_BRIDGE.md",
+    "SKILL.md",
+    "references/01_SURFACE_ROUTING.md",
+    "references/03_TASK_CLASSIFICATION.md",
+    "references/04_RUNWAY_AND_BURN.md",
+    "references/05_WORK_BROWSER_AND_ACTIONS.md",
+    "references/06_CODEX_TECHNICAL_WORK.md",
+    "references/07_FAILURES_AND_RECOVERY.md",
+    "references/10_WEEKLY_QUOTA_CONTROLLER.md",
+    "references/11_ORCHESTRATION_AND_HANDOFF.md",
+    "references/12_AUTONOMOUS_QUOTA_TELEMETRY.md",
+    "references/13_CHATGPT_PLUGIN_AND_QUOTA_BACKEND.md",
 ]
+
 MODEL_NAME_PATTERNS = [
     (r"\bGPT-\d", "hardcoded GPT-* generation name"),
     (r"\bgpt-\d", "hardcoded gpt-* generation id"),
     (r"\bo[34](?:-[a-z0-9]+)?\b", "hardcoded o3/o4 model name"),
 ]
+
 SECRET_PATTERNS = [
     (r"sk-[A-Za-z0-9_-]{20,}", "possible OpenAI secret"),
     (r"gh[pousr]_[A-Za-z0-9]{36,}", "possible GitHub token"),
@@ -208,10 +260,25 @@ SECRET_PATTERNS = [
     (r"Bearer [A-Za-z0-9._~+/=-]{20,}", "possible bearer token"),
 ]
 
-errors = []
+NORMATIVE_WEB_ONLY_FILES = [
+    "SKILL.md",
+    "docs/USAGE.md",
+    "docs/ARCHITECTURE.md",
+    "references/12_AUTONOMOUS_QUOTA_TELEMETRY.md",
+    "references/13_CHATGPT_PLUGIN_AND_QUOTA_BACKEND.md",
+]
+
+FORBIDDEN_PRODUCTION_DRIFT = [
+    "ORCHESTRATION_MODE=WORK_STANDALONE",
+    "ORCHESTRATION_MODE=CODEX_STANDALONE",
+    "COMPANION_ROLE=SENSOR_TRANSPORT_ONLY",
+    "local quota sensor\n        ↓",
+]
+
+errors: list[str] = []
 
 
-def read(rel):
+def read(rel: str) -> str:
     path = ROOT / rel
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
@@ -229,9 +296,16 @@ if version and not version.startswith("3."):
 readme = read("README.md")
 if version and f"v{version}" not in readme:
     errors.append(f"README.md does not mention current version v{version}")
+if "P0_SERVER_SIDE_PLUS_QUOTA=PROVEN" not in readme:
+    errors.append("README.md does not record the proven server-side Plus P0")
+if "160 regression" not in readme:
+    errors.append("README.md does not expose current 160-test baseline")
+
 changelog = read("CHANGELOG.md")
 if version and not re.search(rf"^##\s+{re.escape(version)}\b", changelog, re.M):
     errors.append(f"CHANGELOG.md missing heading for version {version}")
+if "server-side Plus quota path" not in changelog:
+    errors.append("CHANGELOG.md missing v3 server-side Plus quota proof")
 
 raw_tests = (
     read("tests/TEST_CASES.md")
@@ -242,38 +316,33 @@ numbers = [int(n) for n in re.findall(r"^## Test (\d+)\b", raw_tests, re.M)]
 if not numbers:
     errors.append("no numbered tests found")
 else:
-    if numbers != list(range(1, max(numbers) + 1)):
+    expected = list(range(1, max(numbers) + 1))
+    if numbers != expected:
         errors.append("tests are not numbered contiguously from 1 across base + version additions")
     if len(numbers) < MIN_TESTS:
         errors.append(f"tests count {len(numbers)} < {MIN_TESTS}")
 
-for needle in SKILL_INVARIANTS:
-    if needle not in read("SKILL.md"):
-        errors.append(f"SKILL.md missing required rule: {needle}")
-for needle in ROUTING_INVARIANTS:
-    if needle not in read("references/01_SURFACE_ROUTING.md"):
-        errors.append(f"surface routing missing required rule: {needle}")
-for needle in MODEL_ROUTER_INVARIANTS:
-    if needle not in read("references/08_MODEL_TIER_ROUTING.md"):
-        errors.append(f"model router missing required rule: {needle}")
-for needle in ASTRA_INVARIANTS:
-    if needle not in read("references/09_ASTRA_EXECUTION.md"):
-        errors.append(f"Astra execution reference missing required rule: {needle}")
-for needle in CONTROLLER_INVARIANTS:
-    if needle not in read("references/10_WEEKLY_QUOTA_CONTROLLER.md"):
-        errors.append(f"weekly controller missing required rule: {needle}")
-for needle in HANDOFF_INVARIANTS:
-    if needle not in read("references/11_ORCHESTRATION_AND_HANDOFF.md"):
-        errors.append(f"handoff reference missing required rule: {needle}")
-for needle in TELEMETRY_INVARIANTS:
-    if needle not in read("references/12_AUTONOMOUS_QUOTA_TELEMETRY.md"):
-        errors.append(f"autonomous telemetry reference missing required rule: {needle}")
-for needle in BRIDGE_INVARIANTS:
-    if needle not in read("references/13_COMPANION_AND_CHAT_BRIDGE.md"):
-        errors.append(f"companion/chat bridge reference missing required rule: {needle}")
-for needle in NATIVE_COMPANION_INVARIANTS:
-    if needle not in read("companion/macos/Sources/RegulatorCompanion/main.swift"):
-        errors.append(f"native Companion missing required implementation marker: {needle}")
+checks = [
+    ("SKILL.md", SKILL_INVARIANTS, "SKILL.md missing required rule"),
+    ("references/01_SURFACE_ROUTING.md", ROUTING_INVARIANTS, "surface routing missing required rule"),
+    ("references/08_MODEL_TIER_ROUTING.md", MODEL_ROUTER_INVARIANTS, "model router missing required rule"),
+    ("references/09_ASTRA_EXECUTION.md", ASTRA_INVARIANTS, "Astra execution reference missing required rule"),
+    ("references/10_WEEKLY_QUOTA_CONTROLLER.md", CONTROLLER_INVARIANTS, "weekly controller missing required rule"),
+    ("references/11_ORCHESTRATION_AND_HANDOFF.md", HANDOFF_INVARIANTS, "handoff reference missing required rule"),
+    ("references/12_AUTONOMOUS_QUOTA_TELEMETRY.md", TELEMETRY_INVARIANTS, "autonomous telemetry reference missing required rule"),
+    ("references/13_CHATGPT_PLUGIN_AND_QUOTA_BACKEND.md", PLUGIN_INVARIANTS, "Plugin/backend reference missing required rule"),
+]
+for rel, needles, label in checks:
+    text = read(rel)
+    for needle in needles:
+        if needle not in text:
+            errors.append(f"{label}: {needle}")
+
+for rel in NORMATIVE_WEB_ONLY_FILES:
+    text = read(rel)
+    for needle in FORBIDDEN_PRODUCTION_DRIFT:
+        if needle in text:
+            errors.append(f"{rel} contains obsolete production architecture: {needle}")
 
 source_map = read("references/SOURCE_MAP.md")
 if not re.search(r"\*\*Verified:\*\*\s*\d{4}-\d{2}-\d{2}", source_map):
@@ -282,7 +351,7 @@ if "**Skill release:** 3.0" not in source_map:
     errors.append("SOURCE_MAP.md is not marked for release 3.0")
 for url in REQUIRED_SOURCES:
     if url not in source_map:
-        errors.append(f"SOURCE_MAP missing official source: {url}")
+        errors.append(f"SOURCE_MAP missing source: {url}")
 
 for rel in GENERATION_NEUTRAL_FILES:
     text = read(rel)
@@ -290,10 +359,9 @@ for rel in GENERATION_NEUTRAL_FILES:
         if re.search(pattern, text):
             errors.append(f"{rel} contains {label}; move dated model facts to dated model/source references")
 
-# Ordinary executor templates must remain independent from controller installation,
-# automatic telemetry plumbing and internal quota math.
+# Executor templates must remain independent from the skill, Plugin and controller internals.
 skill = read("SKILL.md")
-executor_sections = []
+executor_sections: list[str] = []
 for start_heading, end_heading in [
     ("## 19. Work executor packet", "## 20. Codex executor packet"),
     ("## 20. Codex executor packet", "## 21. Telemetry provider discipline"),
@@ -318,29 +386,43 @@ FORBIDDEN_EXECUTOR_LEAKS = [
     "QUOTA_TELEMETRY_STATE",
     "get_quota_snapshot",
     "openai-work-codex-regulator",
+    "OAuth",
+    "refresh token",
 ]
 for section in executor_sections:
     for needle in FORBIDDEN_EXECUTOR_LEAKS:
         if needle in section:
             errors.append(f"executor template leaks control-plane dependency/state: {needle}")
 
-# The canonical Chat-facing quota tool takes no model-supplied identity or secret.
+# Canonical Chat-facing quota tool: zero model-provided identity, read-only surface.
 try:
-    tool_contract = json.loads(read("relay/get_quota_snapshot.tool.json"))
+    tool_contract = json.loads(read("plugin/get_quota_snapshot.tool.json"))
     if tool_contract.get("name") != "get_quota_snapshot":
         errors.append("quota tool contract has wrong tool name")
     input_schema = tool_contract.get("inputSchema") or {}
     if input_schema.get("properties") != {} or input_schema.get("additionalProperties") is not False:
         errors.append("get_quota_snapshot must have zero model-provided arguments")
-    security = tool_contract.get("security") or {}
-    if security.get("read_only") is not True:
+    annotations = tool_contract.get("annotations") or {}
+    if annotations.get("readOnlyHint") is not True:
         errors.append("get_quota_snapshot tool must be read-only")
-    if security.get("model_visible_installation_id") is not False:
-        errors.append("quota tool must not expose installation id to the model")
-    if security.get("model_visible_reader_token") is not False:
-        errors.append("quota tool must not expose reader token to the model")
+    if annotations.get("destructiveHint") is not False:
+        errors.append("get_quota_snapshot tool must be non-destructive")
 except Exception as exc:
     errors.append(f"quota tool contract validation failed: {exc}")
+
+backend = read("plugin/quota_backend.py")
+for needle in [
+    '"account/login/start"',
+    '"account/login/completed"',
+    '"account/updated"',
+    '"account/rateLimits/read"',
+    'SOURCE = "OPENAI_CODEX_APP_SERVER"',
+    "FIVE_HOUR_MINUTES = 300",
+    "WEEKLY_MINUTES = 10080",
+    "_assert_no_secret_fields",
+]:
+    if needle not in backend:
+        errors.append(f"quota backend missing implementation marker: {needle}")
 
 
 def run_module_self_test(path: Path, module_name: str, label: str) -> None:
@@ -369,17 +451,13 @@ run_module_self_test(
     "quota telemetry",
 )
 run_module_self_test(
-    ROOT / "companion" / "quota_companion.py",
-    "quota_companion_validation",
-    "quota companion",
-)
-run_module_self_test(
-    ROOT / "relay" / "quota_relay.py",
-    "quota_relay_validation",
-    "quota relay",
+    ROOT / "plugin" / "quota_backend.py",
+    "quota_plugin_backend_validation",
+    "quota Plugin backend",
 )
 
-scan_targets = set()
+# Scan text-like repository files for common secret patterns.
+scan_targets: set[Path] = set()
 for glob in ("*.md", "*.py", "*.swift", "*.sh", "*.yml", "*.yaml", "*.toml", "*.txt", "*.json", "*.plist"):
     scan_targets.update(ROOT.rglob(glob))
 for path in sorted(scan_targets):
@@ -390,6 +468,7 @@ for path in sorted(scan_targets):
         if re.search(pattern, text):
             errors.append(f"{path.relative_to(ROOT)} contains {label}")
 
+# Release ZIP must remain portable across ordinary filesystems.
 for path in sorted(ROOT.rglob("*")):
     rel = path.relative_to(ROOT).as_posix()
     if rel.startswith(".git/") or not path.is_file():
@@ -405,5 +484,5 @@ if errors:
 
 print(
     f"Repository validation OK — openai-work-codex-regulator v{version} "
-    f"({len(numbers)} tests, autonomous telemetry + native Companion + relay + balanced controller present)"
+    f"({len(numbers)} tests, ChatGPT Web-only Plugin telemetry + balanced controller present)"
 )

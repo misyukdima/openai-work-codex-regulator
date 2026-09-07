@@ -1,181 +1,181 @@
 # v3.0 regression additions
 
-## Test 116 — ChatGPT-first automatic quota refresh
-**Input:** regulator runs in ChatGPT and a quota-sensitive Work/Codex pass is about to be admitted; a supported quota tool is connected.  
-**Expected:** Chat refreshes telemetry automatically before admission; user is not asked to open Usage or resend percentages.
+## Test 116 — ChatGPT Web is the only skill runtime
+**Input:** v3.0 ZIP is attached in ChatGPT Web and a task later routes to Work or Codex.  
+**Expected:** `SKILL_RUNTIME=CHATGPT_WEB_ONLY`; ChatGPT owns the regulator and downstream executors receive self-contained packets without loading the skill.
 
-## Test 117 — manual quota is fallback only
-**Input:** automatic telemetry returns a fresh weekly/5h snapshot.  
-**Expected:** `AUTO_QUOTA_TELEMETRY=DEFAULT`; manual quota input is not required.
+## Test 117 — no standalone Work/Codex skill mode
+**Input:** a handoff is prepared for Work or Codex.  
+**Expected:** no instruction asks the executor to invoke/load/read/follow the regulator; `EXECUTOR_SKILL_REQUIRED=NO`.
 
-## Test 118 — automatic telemetry unavailable
-**Input:** quota tool is unavailable while useful non-agentic Chat planning remains possible.  
-**Expected:** continue productive Chat work; request a manual first-party snapshot only if a quota-sensitive decision later cannot be made safely.
+## Test 118 — ZIP bootstrap ends user setup
+**Input:** ordinary user attaches the release ZIP in ChatGPT Web.  
+**Expected:** normal skill bootstrap requires no Terminal, desktop app, local daemon, Homebrew, CodexBar, localhost, tunnel or OS-specific configuration.
 
-## Test 119 — Chat may not assume localhost access
-**Input:** regulator runs in browser/cloud ChatGPT while CodexBar is installed on the user's Mac.  
-**Expected:** `CHAT_LOCALHOST_ASSUMPTION=FORBIDDEN`; Chat does not pretend it can execute local CLI or read `127.0.0.1` directly.
+## Test 119 — Plugin auth is just in time
+**Input:** Plugin is not connected but current work is ordinary Chat planning with no quota-sensitive decision.  
+**Expected:** do not interrupt the user with authorization; `PLUGIN_AUTH=JUST_IN_TIME`.
 
-## Test 120 — connected quota tool bridges local telemetry
-**Input:** local sensor publishes a sanitized snapshot to a Chat-accessible connected app/tool.  
-**Expected:** Chat uses `get_quota_snapshot()` as telemetry input while all admission/routing decisions remain in the regulator control plane.
+## Test 120 — quota-sensitive decision triggers Plugin path
+**Input:** next Work/Codex pass needs current allowance and Plugin is not connected.  
+**Expected:** ChatGPT surfaces supported Connect/Auth rather than asking for recurring manual quota bookkeeping.
 
-## Test 121 — CodexBar primary/secondary position is not semantic
-**Input:** CodexBar reports weekly window as `primary` and 5h window as `secondary`.  
-**Expected:** classify by duration; weekly and 5h values are normalized correctly.
+## Test 121 — connected Plugin reads automatically
+**Input:** quota-sensitive decision occurs and Regulator Quota Plugin is already connected.  
+**Expected:** ChatGPT calls `get_quota_snapshot()` automatically before admission.
 
-## Test 122 — five-hour window classification
-**Input:** reported window duration is 300 minutes.  
+## Test 122 — quota tool has zero model identity arguments
+**Input:** inspect canonical `get_quota_snapshot` contract.  
+**Expected:** input schema has no email, account id, installation id, workspace id, token or arbitrary properties.
+
+## Test 123 — Plugin is read-only
+**Input:** inspect model-callable Plugin surface.  
+**Expected:** no credit purchase, paid reset, spending mutation, generic Codex RPC, shell or account-mutation tool is exposed.
+
+## Test 124 — Plugin has no admission authority
+**Input:** fresh quota snapshot is returned.  
+**Expected:** Plugin returns facts only; ChatGPT regulator alone computes routing/model/admission/pace decisions.
+
+## Test 125 — Chat may not assume localhost
+**Input:** user happens to have Codex/CodexBar installed locally.  
+**Expected:** ChatGPT Web never assumes shell/local-file/`127.0.0.1` access and does not make local software a prerequisite.
+
+## Test 126 — no OS-specific production dependency
+**Input:** same skill is used from Windows, macOS or Linux browser.  
+**Expected:** product contract is unchanged because quota acquisition is server-side; `OS_DEPENDENCY=NO`.
+
+## Test 127 — official Codex server-side source
+**Input:** authenticated backend needs exact Work/Codex quota.  
+**Expected:** supported backend path uses official `codex app-server` account rate-limit read and normalizes its result.
+
+## Test 128 — login completion alone is not auth readiness
+**Input:** `account/login/completed(success=true)` arrives before managed auth reload.  
+**Expected:** backend does not immediately read rate limits; it waits for authenticated `account/updated`.
+
+## Test 129 — account updated unlocks rate-limit read
+**Input:** successful login completion is followed by `account/updated` with non-null auth mode.  
+**Expected:** backend may call `account/rateLimits/read`.
+
+## Test 130 — unauthenticated rate-limit read fails closed
+**Input:** app-server has no active account auth.  
+**Expected:** backend returns authorization-required/unavailable state, never a zero-usage snapshot.
+
+## Test 131 — prefer codex bucket
+**Input:** `rateLimitsByLimitId` contains both `base_model_inference` and `codex`.  
+**Expected:** Work/Codex quota normalization selects `codex`, not another product bucket.
+
+## Test 132 — weekly window classification
+**Input:** a rate window reports `windowDurationMins=10080`.  
+**Expected:** classify as `WEEKLY` regardless of `primary`/`secondary` position.
+
+## Test 133 — five-hour window classification
+**Input:** a rate window reports `windowDurationMins=300`.  
 **Expected:** classify as `FIVE_HOUR` regardless of field position.
 
-## Test 123 — weekly window classification
-**Input:** reported window duration is 10080 minutes.  
-**Expected:** classify as `WEEKLY` regardless of field position.
+## Test 134 — unknown window remains other
+**Input:** a rate window reports 43200 minutes.  
+**Expected:** preserve as `OTHER_WINDOW`; never reinterpret it as weekly or 5h.
 
-## Test 124 — unknown 30-day window is not misclassified
-**Input:** Codex telemetry contains a 43200-minute window with no weekly window.  
-**Expected:** preserve it as `OTHER_WINDOW`; `WEEKLY_USED=unknown`, never reinterpret it as 5h or weekly.
+## Test 135 — missing five-hour window remains unavailable
+**Input:** exact source contains a weekly window but no 300-minute window.  
+**Expected:** `FIVE_HOUR_USED/FIVE_HOUR_RESET=unknown|null`; never synthesize 0%.
 
-## Test 125 — stale machine snapshot
-**Input:** quota telemetry timestamp exceeds the configured freshness threshold.  
-**Expected:** `QUOTA_TELEMETRY_STATE=STALE`; refresh before a large class 2–4 pass rather than treating stale values as current.
+## Test 136 — missing weekly window remains unavailable
+**Input:** source contains no 10080-minute window.  
+**Expected:** weekly fields remain unknown/null; controller does not infer a fresh week.
 
-## Test 126 — post-pass unchanged meter remains pending
-**Input:** meaningful Work/Codex pass completes and immediate fresh read shows the same aggregate meter while reporting may lag.  
-**Expected:** do not infer zero burn; preserve `PENDING_BURN=YES`.
+## Test 137 — field position is not semantics
+**Input:** weekly is `primary` and 5h is `secondary`, then positions reverse in another payload.  
+**Expected:** both normalize identically by duration; `RATE_WINDOW_POSITION_IS_NOT_SEMANTICS`.
 
-## Test 127 — later meter movement resolves pending burn
-**Input:** a later snapshot in the same quota epoch advances after Test 126.  
-**Expected:** aggregate delta may become an observed burn sample under existing compatibility/attribution rules; `PENDING_BURN` can clear.
+## Test 138 — no secrets in model snapshot
+**Input:** backend auth state internally contains OAuth/access/refresh material.  
+**Expected:** normalized output contains no token, cookie, Authorization header, raw auth file, password or credential-store id.
 
-## Test 128 — reset invalidates old trajectory
-**Input:** automatic telemetry detects a confirmed reset or materially changed reset boundary.  
-**Expected:** create a new quota epoch and re-anchor; never mix pre-reset anchor values with post-reset usage.
+## Test 139 — raw provider response is not model output
+**Input:** upstream response includes extra account/provider fields outside allow-list.  
+**Expected:** tool emits normalized schema only; unknown raw fields do not leak through.
 
-## Test 129 — telemetry cannot buy capacity
-**Input:** local sensor or connected quota tool can read credits/reset eligibility.  
-**Expected:** telemetry path remains read-only; it cannot buy credits, trigger a paid reset or mutate spending controls.
+## Test 140 — subject identity resolved server-side
+**Input:** connected ChatGPT Plugin invokes quota tool.  
+**Expected:** authenticated Plugin context resolves subject/account server-side; model cannot choose another identity via arguments.
 
-## Test 130 — telemetry provider is not an admission controller
-**Input:** CodexBar or another provider exposes its own pacing/guard recommendation.  
-**Expected:** ignore provider admission policy; only normalized meter/reset telemetry enters the regulator's v2.2 decision engine.
+## Test 141 — cross-subject read is forbidden
+**Input:** subject A attempts to address subject B's quota state.  
+**Expected:** fail closed; no cross-user snapshot is returned.
 
-## Test 131 — no secrets in telemetry snapshot
-**Input:** local provider has OAuth tokens, cookies and account credentials available internally.  
-**Expected:** normalized snapshot contains no token/cookie/auth material and no raw auth file content.
+## Test 142 — silent account switch is forbidden
+**Input:** backend observes a different account/workspace than the bound authorization.  
+**Expected:** report binding conflict and require explicit reauthorization; do not silently switch.
 
-## Test 132 — direct Codex standalone telemetry
-**Input:** regulator is invoked directly inside local Codex with shell/tool access.  
-**Expected:** `ORCHESTRATION_MODE=CODEX_STANDALONE`; local adapter may provide the same normalized snapshot without requiring ChatGPT or the remote bridge.
+## Test 143 — credential isolation is release gate
+**Input:** quota acquisition works but per-subject credential isolation has not been audited.  
+**Expected:** branch remains development-only; technical P0 success is insufficient for release.
 
-## Test 133 — Work standalone remains supported
-**Input:** user invokes the regulator directly in Work and a supported connected quota tool is available.  
-**Expected:** Work may own the local control plane for that pass and use automatic normalized telemetry; ChatGPT-first remains the preferred default, not a hard dependency.
+## Test 144 — token refresh is release gate
+**Input:** access credential expires.  
+**Expected:** production design must have tested refresh/re-auth behavior; no repeated manual quota copy/paste fallback as normal UX.
 
-## Test 134 — zero-friction onboarding requirement
-**Input:** ordinary nontechnical user installs the final v3.0 product.  
-**Expected:** normal setup does not require Terminal, Homebrew, manual CodexBar setup, JSON/YAML editing, token copy/paste, localhost/tunnel configuration or periodic quota messages.
+## Test 145 — revoke/logout invalidates backend session
+**Input:** user disconnects/revokes authorization.  
+**Expected:** subsequent quota read requires authorization and cannot continue using stale credentials.
 
-## Test 135 — v2.2 controller remains mathematically authoritative
-**Input:** automatic telemetry produces normalized weekly used/reset and 5h state.  
-**Expected:** existing epoch-anchored trajectory, burn estimator, quality floor, 5h breaker and balanced quota/pace admission remain the decision engine; telemetry acquisition does not reimplement quota math.
+## Test 146 — stale snapshot is recomputed as stale
+**Input:** a previously fresh snapshot ages beyond policy threshold.  
+**Expected:** report `STALE`; old `FRESH` label cannot survive indefinitely.
 
-## Test 136 — Companion discovers bundled sensor before user setup
-**Input:** Companion bundle contains a compatible CodexBar helper and no system-wide CodexBar install exists.  
-**Expected:** Companion can use the bundled helper; separate CodexBar installation is not a user prerequisite.
+## Test 147 — automatic refresh before agentic pass
+**Input:** meaningful Work/Codex pass is about to launch and current snapshot is stale/absent.  
+**Expected:** attempt fresh `get_quota_snapshot()` before quota-sensitive admission.
 
-## Test 137 — explicit read-only CodexBar usage mode
-**Input:** Companion invokes the CodexBar reference sensor.  
-**Expected:** it requests Codex usage through explicit OAuth/read-only telemetry mode and does not invoke provider guard/admission or credit/reset actions.
+## Test 148 — automatic refresh after meaningful pass
+**Input:** meaningful Work/Codex execution completes.  
+**Expected:** refresh meter when available to observe aggregate movement and reset state.
 
-## Test 138 — Companion strips credential-like data
-**Input:** sensor internally has access to OAuth/account state.  
-**Expected:** Companion→relay envelope contains only the normalized quota schema and no tokens, cookies, auth-file content or unnecessary account identity.
+## Test 149 — unchanged post-pass meter remains pending
+**Input:** immediate fresh read matches pre-pass aggregate meter while reporting may lag.  
+**Expected:** do not infer zero burn; `PENDING_BURN=YES`.
 
-## Test 139 — production relay requires HTTPS
-**Input:** Companion is configured with `http://127.0.0.1` or another plaintext relay URL for the Chat path.  
-**Expected:** reject it as `INSECURE_RELAY`; ordinary Chat must not rely on localhost or plaintext transport.
+## Test 150 — later meter movement resolves pending burn
+**Input:** later fresh snapshot in same epoch advances after Test 149.  
+**Expected:** compatible aggregate delta may become observed burn sample and pending state may clear.
 
-## Test 140 — device and Chat reader credentials are separate
-**Input:** relay provisions one installation.  
-**Expected:** device-write token and Chat-reader token are distinct; a device token cannot read the Chat-facing snapshot.
+## Test 151 — reset creates new quota epoch
+**Input:** confirmed reset or material reset-boundary change appears in fresh telemetry.  
+**Expected:** invalidate old anchor and create new `QUOTA_EPOCH_ID` before further controller math.
 
-## Test 141 — relay stores credential hashes only
-**Input:** relay persists installation credentials.  
-**Expected:** raw device/reader credentials are not stored in the relay database.
+## Test 152 — automatic telemetry unavailable does not halt Chat
+**Input:** Plugin/source is unavailable while useful non-agentic Chat work remains.  
+**Expected:** continue planning/review/handoff; do not stop project merely because quota telemetry is temporarily unavailable.
 
-## Test 142 — relay rejects unexpected snapshot fields
-**Input:** Companion tries to upload an extra `oauth_token`, `cookie`, password or other field outside the normalized contract.  
-**Expected:** relay rejects the payload instead of storing or forwarding it.
+## Test 153 — manual snapshot is last fallback
+**Input:** automatic telemetry remains unavailable and next quota-sensitive pass cannot be admitted safely.  
+**Expected:** only then request a first-party manual snapshot; `MANUAL_QUOTA_INPUT=FALLBACK_ONLY`.
 
-## Test 143 — relay is telemetry cache, not controller
-**Input:** a fresh snapshot is available remotely.  
-**Expected:** relay returns telemetry/freshness only; it does not calculate `LAUNCH_BASE`, model tier, pace risk or future advance.
+## Test 154 — v2.2 controller remains authoritative
+**Input:** Plugin returns normalized fresh meter state.  
+**Expected:** epoch trajectory, burn estimator, quality floor, 5h breaker and balanced quota/pace controller remain the admission engine.
 
-## Test 144 — Chat tool has zero model-provided identity arguments
-**Input:** ChatGPT calls the canonical quota tool.  
-**Expected:** `get_quota_snapshot()` takes no installation id, email, token or account selector from the model; authenticated app identity resolves the installation server-side.
+## Test 155 — quality floor cannot be bypassed by fresh quota
+**Input:** quota has headroom but selected plan/model would miss required tests/sources/security.  
+**Expected:** `QUALITY_FLOOR=NON_NEGOTIABLE`; do not launch insufficient execution.
 
-## Test 145 — Chat tool is read-only
-**Input:** tool contract is inspected.  
-**Expected:** there is no credit purchase, paid reset, spending-control mutation, provider guard or generic write action in the quota tool surface.
+## Test 156 — Plugin cannot spend money
+**Input:** snapshot reports credits or paid reset eligibility.  
+**Expected:** telemetry path remains read-only; any purchase/reset is a separate explicitly authorized class-4 action outside quota Plugin surface.
 
-## Test 146 — remote Chat path is primary
-**Input:** browser/cloud ChatGPT is the regulator control plane.  
-**Expected:** normal telemetry path is authenticated remote app/relay; local MCP/tunnel support may be optional but is not required for ordinary onboarding.
+## Test 157 — executor packet contains no Plugin plumbing
+**Input:** ChatGPT sends a normal Work/Codex handoff.  
+**Expected:** no quota tool, credential, source, trajectory headroom or internal risk fields are copied into the executor packet.
 
-## Test 147 — local standalone path avoids unnecessary relay
-**Input:** regulator runs directly in local Codex with a working local sensor.  
-**Expected:** it may read the normalized local snapshot directly; remote relay is not a mandatory detour for standalone mode.
+## Test 158 — P0 proof is not production auth design
+**Input:** ephemeral server-side Plus quota P0 passes.  
+**Expected:** record acquisition as proven while keeping persistent credential lifecycle and ChatGPT Web Plugin E2E as open release gates.
 
-## Test 148 — relay recomputes freshness
-**Input:** Companion uploaded a snapshot that later becomes old while no new upload arrives.  
-**Expected:** Chat-facing relay read reports stale age based on captured/received time; old `FRESH` text from the original payload cannot keep it fresh indefinitely.
+## Test 159 — deterministic backend self-test is credential-free
+**Input:** CI runs `python3 plugin/quota_backend.py --self-test`.  
+**Expected:** tests normalization and secret exclusion without network or user credentials.
 
-## Test 149 — source-only stack is not release-ready UX
-**Input:** Companion/relay reference code passes CI but no novice-friendly packaged Companion and authenticated Chat app path exist yet.  
-**Expected:** v3.0 remains development-only; passing core tests alone does not satisfy `ZERO_MAINTENANCE_USER_SETUP=REQUIRED`.
-
-## Test 150 — user stays out of quota bookkeeping
-**Input:** packaged Companion and Chat app are healthy during normal work.  
-**Expected:** user states goals and approvals only; periodic quota copying/pasting is not part of the normal orchestration loop.
-
-## Test 151 — pairing begins without copy/paste secret
-**Input:** Companion starts pairing with the relay.  
-**Expected:** relay returns an opaque pairing verifier directly to Companion and a browser `connect_url` containing only the non-secret pairing id; user is not shown a token to copy.
-
-## Test 152 — pairing connect URL is HTTPS
-**Input:** pairing is started with a plaintext connect base URL.  
-**Expected:** reject with `INSECURE_CONNECT_URL`; production browser pairing requires HTTPS.
-
-## Test 153 — pairing verifier is hash-only at rest
-**Input:** relay stores a pending pairing.  
-**Expected:** raw pairing verifier is not persisted; only a salted hash is stored.
-
-## Test 154 — browser claim requires authenticated subject
-**Input:** pairing claim arrives without an authenticated app/web subject identity.  
-**Expected:** reject it; pairing id alone is not authorization to bind an installation.
-
-## Test 155 — pairing claim binds server-side identity
-**Input:** authenticated user opens the connect URL and approves the pending pairing.  
-**Expected:** relay binds that server-side subject to the installation and marks pairing `CLAIMED`.
-
-## Test 156 — Companion polls with verifier
-**Input:** Companion checks pairing state before and after browser approval.  
-**Expected:** correct verifier returns `PENDING` then `CLAIMED`; wrong verifier returns `PAIRING_UNAUTHORIZED`.
-
-## Test 157 — expired pairing fails closed
-**Input:** pending pairing exceeds its bounded TTL before approval.  
-**Expected:** claim/status cannot silently reactivate the pairing; a new pairing flow is required.
-
-## Test 158 — one subject cannot steal another claimed pairing
-**Input:** a second authenticated subject attempts to claim an already claimed pairing.  
-**Expected:** fail closed with `PAIRING_ALREADY_CLAIMED` or equivalent; existing binding is preserved.
-
-## Test 159 — Chat tool resolves installation from auth context
-**Input:** connected ChatGPT app calls `get_quota_snapshot()` for its authenticated subject.  
-**Expected:** server resolves subject→installation internally; no installation id or pairing verifier is exposed to model arguments.
-
-## Test 160 — pairing does not weaken release gate
-**Input:** one-click pairing core passes deterministic tests but production identity provider/app deployment and native Companion packaging are not yet complete.  
-**Expected:** v3.0 remains development-only until the full novice onboarding path works end-to-end.
+## Test 160 — release requires real ChatGPT Web E2E
+**Input:** unit/regression tests are green but no production Connect/Auth → quota read → controller flow has passed.  
+**Expected:** v3.0 remains development-only; PR/merge waits for E2E, cross-subject isolation, credential refresh/revoke and security review.
