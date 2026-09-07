@@ -20,7 +20,6 @@ jobs:
     env:
       CODEX_VERSION: "0.153.4"
       CODEX_SHA256: "f479424eca092484dc40d87ae28c44f4cc40234a60045d6131e493800d814a30"
-      CODEX_HOME: "${{ runner.temp }}/regulator-p0-codex-home"
     steps:
       - name: Checkout feature branch
         uses: actions/checkout@v4
@@ -44,11 +43,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export CODEX_HOME="$RUNNER_TEMP/regulator-p0-codex-home"
           python3 experiments/p0_headless_quota_probe.py
 
       - name: Ensure auth state is ephemeral
         if: always()
         shell: bash
         run: |
-          rm -rf "$CODEX_HOME" "$RUNNER_TEMP/codex-bin" "$RUNNER_TEMP/codex.tar.gz"
+          rm -rf "$RUNNER_TEMP/regulator-p0-codex-home" "$RUNNER_TEMP/codex-bin" "$RUNNER_TEMP/codex.tar.gz"
           echo "Ephemeral P0 auth state deleted."
