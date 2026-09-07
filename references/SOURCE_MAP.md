@@ -56,6 +56,43 @@ Operational consequences for v3.0:
 
 Normative Plugin contract: `references/13_CHATGPT_PLUGIN_AND_QUOTA_BACKEND.md`.
 
+## Official Plugin packaging and MCP transport
+
+Sources:
+- https://developers.openai.com/plugins/build/mcp-server
+- https://developers.openai.com/plugins/build/auth
+- https://developers.openai.com/plugins/build/plugins
+- https://github.com/modelcontextprotocol/python-sdk
+- https://github.com/openai/openai-apps-sdk-examples
+
+Verified implementation facts on 2026-09-07:
+- Plugin MCP servers use a stable Streamable HTTP endpoint, conventionally `/mcp`;
+- user-specific MCP data should be protected with OAuth 2.1 and resource-server token verification;
+- the official MCP Python SDK can mount the bearer gate and RFC 9728 protected-resource metadata from `AuthSettings` + `TokenVerifier`;
+- `get_access_token()` exposes the verified HTTP access-token context inside a tool handler;
+- the quota tool is closed-world and read-only: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`;
+- the production quota scope is `quota:read`;
+- Python MCP SDK `v2.1.1` does not provide a typed top-level `securitySchemes` field on its Tool model. OpenAI's authenticated Python example mirrors the security policy in `_meta.securitySchemes`; for this one-tool server v3 also requires OAuth at the entire `/mcp` endpoint, so endpoint authorization remains authoritative;
+- a model-visible zero-argument tool must preserve raw arguments until the regulator rejection boundary. v3 therefore uses the official low-level `Server` instead of allowing high-level argument parsing to discard unexpected fields;
+- every Plugin package has `.codex-plugin/plugin.json` and bundled skills live under `skills/<skill-name>/SKILL.md`;
+- `.app.json` is added only after ChatGPT registers the MCP connection and returns a real technical ID beginning `plugin_asdk_app...`; v3 does not invent a placeholder ID.
+
+Pinned transport dependencies for this development gate:
+
+```text
+mcp==2.1.1
+mcp-types==2.1.1
+```
+
+Implementation references:
+- `plugin/mcp_transport.py`
+- `plugin/get_quota_snapshot.tool.json`
+- `plugin/requirements-mcp.txt`
+- `.codex-plugin/plugin.json`
+- `scripts/validate_plugin_package.py`
+
+The repository still does not implement its own OAuth authorization server. Production must inject an established/reviewed identity provider and token verifier; the separate Codex quota authorization lifecycle remains managed by `plugin/authorization_coordinator.py`.
+
 ## Official Codex app-server quota path
 
 Primary implementation evidence:

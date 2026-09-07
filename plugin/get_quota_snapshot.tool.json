@@ -76,10 +76,16 @@
     },
     "additionalProperties": false
   },
+  "securitySchemes": [
+    {
+      "type": "oauth2",
+      "scopes": ["quota:read"]
+    }
+  ],
   "annotations": {
     "readOnlyHint": true,
     "destructiveHint": false,
     "idempotentHint": true,
-    "openWorldHint": true
+    "openWorldHint": false
   }
 }

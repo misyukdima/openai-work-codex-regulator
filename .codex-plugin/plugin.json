@@ -1,0 +1,6 @@
+{
+  "name": "openai-work-codex-regulator",
+  "version": "3.0.0",
+  "description": "ChatGPT Web regulator for Work/Codex routing with automatic read-only shared-quota telemetry.",
+  "skills": "./skills/"
+}
