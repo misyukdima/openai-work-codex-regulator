@@ -23,5 +23,7 @@ jobs:
         run: python3 plugin/authorization_coordinator.py
       - name: Validate auth concurrency
         run: python3 plugin/auth_concurrency.py
+      - name: Validate auth recovery
+        run: python3 plugin/auth_recovery.py
       - name: Validate production vault adapter
         run: python3 plugin/production_vault.py
