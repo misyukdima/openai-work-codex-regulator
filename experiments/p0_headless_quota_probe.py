@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -46,7 +45,6 @@ def recv(proc: subprocess.Popen[str], timeout: float = 120.0) -> dict[str, Any]:
         try:
             return json.loads(line)
         except json.JSONDecodeError:
-            # stdout is expected to be protocol-only; ignore unexpected non-JSON defensively.
             continue
     raise TimeoutError("timed out waiting for codex app-server response")
 
@@ -73,8 +71,21 @@ def wait_login_completed(proc: subprocess.Popen[str], login_id: str, timeout: fl
     raise TimeoutError("device-code login timed out")
 
 
+def gha_escape(value: str) -> str:
+    return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def emit_device_auth(verification_url: str, user_code: str) -> None:
+    print("P0_DEVICE_AUTH_REQUIRED", flush=True)
+    print(f"VERIFICATION_URL={verification_url}", flush=True)
+    print(f"USER_CODE={user_code}", flush=True)
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        message = gha_escape(f"Open {verification_url} and enter code {user_code}")
+        print(f"::notice title=P0 Device Auth::{message}", flush=True)
+
+
 def sanitize_rate_limits(result: dict[str, Any]) -> dict[str, Any]:
-    """Keep only quota telemetry fields; omit account identifiers and any opaque backend metadata."""
+    """Keep only quota telemetry fields; omit account identifiers and opaque backend metadata."""
 
     def clean_snapshot(snapshot: Any) -> Any:
         if not isinstance(snapshot, dict):
@@ -189,11 +200,7 @@ def main() -> int:
         login_id = str(result["loginId"])
         verification_url = str(result["verificationUrl"])
         user_code = str(result["userCode"])
-
-        # These are intentionally the only auth-ceremony values printed.
-        print("P0_DEVICE_AUTH_REQUIRED", flush=True)
-        print(f"VERIFICATION_URL={verification_url}", flush=True)
-        print(f"USER_CODE={user_code}", flush=True)
+        emit_device_auth(verification_url, user_code)
 
         completed = wait_login_completed(proc, login_id, 300.0)
         if not completed.get("success"):
