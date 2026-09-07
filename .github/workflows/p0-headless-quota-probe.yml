@@ -1,0 +1,54 @@
+name: P0 headless Plus quota probe
+
+on:
+  push:
+    branches:
+      - feat/v3-autonomous-quota-telemetry
+    paths:
+      - experiments/p0_headless_quota_probe.py
+      - .github/workflows/p0-headless-quota-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Ephemeral Codex quota probe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    env:
+      CODEX_VERSION: "0.153.4"
+      CODEX_SHA256: "f479424eca092484dc40d87ae28c44f4cc40234a60045d6131e493800d814a30"
+      CODEX_HOME: "${{ runner.temp }}/regulator-p0-codex-home"
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+
+      - name: Download pinned official Codex CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-x86_64-unknown-linux-musl.tar.gz"
+          curl --fail --location --silent --show-error "$url" --output "$RUNNER_TEMP/codex.tar.gz"
+          printf '%s  %s\n' "$CODEX_SHA256" "$RUNNER_TEMP/codex.tar.gz" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/codex-bin"
+          tar -xzf "$RUNNER_TEMP/codex.tar.gz" -C "$RUNNER_TEMP/codex-bin"
+          bin="$(find "$RUNNER_TEMP/codex-bin" -type f -name 'codex*' | head -n 1)"
+          test -n "$bin"
+          chmod +x "$bin"
+          echo "CODEX_BIN=$bin" >> "$GITHUB_ENV"
+          "$bin" --version
+
+      - name: Run ephemeral device-code quota probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 experiments/p0_headless_quota_probe.py
+
+      - name: Ensure auth state is ephemeral
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "$CODEX_HOME" "$RUNNER_TEMP/codex-bin" "$RUNNER_TEMP/codex.tar.gz"
+          echo "Ephemeral P0 auth state deleted."
