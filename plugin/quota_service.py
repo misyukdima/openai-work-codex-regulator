@@ -15,7 +15,6 @@ from pathlib import Path
 import sys
 from typing import Any, Callable, Protocol
 
-# Support both package import (validator/tests) and direct development self-test.
 try:
     from plugin.quota_backend import CodexAppServer, normalize_rate_limits
     from plugin.subject_store import SubjectAuthStore
@@ -69,10 +68,12 @@ class QuotaService:
         if not self.auth_store.exists(subject):
             raise AuthorizationRequired("Plugin subject has no authorized quota session")
 
-        auth_context = self.auth_store.open(subject)
-        # subject_key/codex_home stay server-side. Neither appears in the result.
-        with self.reader_factory(str(auth_context.codex_home)) as reader:
-            raw = reader.read_rate_limits()
+        # The auth store decides whether this is a persistent dev directory or a
+        # temporarily decrypted production context. The quota service never sees
+        # a credential blob and never returns subject/path state to the model.
+        with self.auth_store.materialize(subject) as auth_context:
+            with self.reader_factory(str(auth_context.codex_home)) as reader:
+                raw = reader.read_rate_limits()
         snapshot = normalize_rate_limits(raw)
 
         forbidden_result_fields = {
@@ -111,8 +112,6 @@ class QuotaToolHandler:
             raise InvalidToolArguments("get_quota_snapshot accepts no model-provided arguments")
         return self.service.get_quota_snapshot(context)
 
-
-# ---------- deterministic self-test ----------
 
 class _FakeReader:
     def __init__(self, payload: dict[str, Any]) -> None:
@@ -157,7 +156,6 @@ def self_test() -> None:
         service = QuotaService(auth_store=store, reader_factory=fake_factory)
         tool = QuotaToolHandler(service)
 
-        # No subject binding exists before authorization.
         try:
             tool.call(PluginRequestContext(subject_a))
         except AuthorizationRequired:
@@ -174,7 +172,6 @@ def self_test() -> None:
         assert "subject_key" not in result
         assert "codex_home" not in result
 
-        # Model cannot override or select identity through tool arguments.
         for bad_args in (
             {"subject": subject_b},
             {"email": "other@example.com"},
@@ -188,7 +185,6 @@ def self_test() -> None:
             else:
                 raise AssertionError(f"model identity override must fail: {bad_args}")
 
-        # Subject B is still unauthorized even though A has state.
         try:
             tool.call(PluginRequestContext(subject_b))
         except AuthorizationRequired:

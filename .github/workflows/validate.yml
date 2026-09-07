@@ -17,3 +17,5 @@ jobs:
         run: python3 scripts/validate_repo.py
       - name: Validate quota Plugin backend
         run: python3 plugin/quota_backend.py --self-test
+      - name: Validate sealed auth lifecycle
+        run: python3 plugin/sealed_auth_store.py
