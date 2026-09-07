@@ -19,3 +19,7 @@ jobs:
         run: python3 plugin/quota_backend.py --self-test
       - name: Validate sealed auth lifecycle
         run: python3 plugin/sealed_auth_store.py
+      - name: Validate authorization coordinator
+        run: python3 plugin/authorization_coordinator.py
+      - name: Validate production vault adapter
+        run: python3 plugin/production_vault.py

@@ -44,7 +44,7 @@ production_safe = False
 
 ### `sealed_auth_store.py`
 
-Фиксирует production-oriented credential lifecycle без собственной криптографии:
+Фиксирует credential lifecycle без собственной production-криптографии:
 
 ```text
 opaque subject key
@@ -60,9 +60,45 @@ validate + reseal updated auth.json
 guaranteed plaintext cleanup
 ```
 
-`SealedBlobStore` и `EnvelopeCipher` — injected adapters. Реальный production adapter должен использовать audited KMS/secret infrastructure и выставлять `production_safe=True` только после review.
+`SealedBlobStore` и `EnvelopeCipher` являются injected adapters. Репозиторный `ReversibleTestCipher` не является шифрованием и специально имеет `production_safe=False`.
 
-Репозиторный `ReversibleTestCipher` **не является шифрованием** и специально имеет `production_safe=False`. `require_production_safe()` обязан отвергать его в production.
+### `production_vault.py`
+
+Связывает sealed lifecycle с внешней production-инфраструктурой:
+
+- `DurableBlobProvider` отвечает за durable object/secret storage;
+- `EnvelopeCryptoProvider` отвечает за audited KMS/envelope cryptography;
+- object key строится только из валидированного opaque subject key;
+- внешний crypto provider обязан объявить `key_reference` и `algorithm_id`;
+- `build_production_auth_store()` fail-closed, если storage или crypto adapter не прошёл production gate.
+
+Сам репозиторий не реализует production cipher и не хранит encryption keys.
+
+### `authorization_coordinator.py`
+
+Отдельный trusted Connect/Auth state machine. Он не расширяет model-facing quota tool.
+
+```text
+begin
+  ↓
+STARTING
+  ↓
+WAITING_USER
+  ↓
+AUTHORIZED | CANCELLED | EXPIRED | FAILED
+```
+
+Coordinator:
+
+- переиспользует один pending flow при повторном Connect одного subject;
+- привязывает authorization id к trusted subject server-side;
+- не раскрывает чужой session id как existence oracle;
+- держит live `codex app-server` только на время device-code flow;
+- на cancel закрывает live client;
+- revoke сначала останавливает активный worker, затем удаляет durable auth;
+- очищает raw subject из terminal in-memory record.
+
+Текущая реализация является pinned-worker core. Multi-replica routing/lease для живого authorization process остаётся отдельным deployment gate.
 
 ### `quota_service.py`
 
@@ -81,9 +117,9 @@ Machine-readable model-facing contract. `inputSchema` пуст и запреща
 
 ## Почему seal/unseal подходит official Codex
 
-В official file-mode managed auth хранится в `$CODEX_HOME/auth.json`; Codex сам обновляет этот record при refresh. Поэтому backend не обязан держать постоянный plaintext Codex home. Он может materialize один private auth file на время операции и reseal обновлённую версию после успешного выхода.
+В official file-mode managed auth хранится в `$CODEX_HOME/auth.json`; Codex сам обновляет этот record при refresh. Поэтому backend не обязан держать постоянный plaintext Codex home. Он materialize один private auth file на время операции и reseal обновлённую версию после успешного выхода.
 
-Это архитектурное решение всё равно требует настоящего production KMS/secret adapter и отдельного concurrency/crash review.
+Это решение всё равно требует настоящего production KMS/secret adapter, concurrency/crash review и реального Connect/Auth E2E.
 
 ## Что ещё отсутствует
 
@@ -91,13 +127,14 @@ Release gates:
 
 1. ChatGPT Web Connect/Auth E2E;
 2. audited subject-to-account binding;
-3. production KMS/secret-backed sealed blob store;
-4. encryption/key rotation policy;
+3. реальный audited KMS/secret provider deployment;
+4. encryption key rotation policy;
 5. token refresh/revocation/logout E2E;
-6. concurrent calls for one subject;
+6. concurrent quota calls for one subject;
 7. crash/partial-write recovery;
-8. cross-subject isolation under load;
-9. threat model и security review.
+8. multi-replica authorization routing/lease;
+9. cross-subject isolation under load;
+10. threat model и security review.
 
 До закрытия этих gates feature-ветка остаётся development-only.
 
@@ -108,6 +145,8 @@ python3 plugin/quota_backend.py --self-test
 python3 plugin/subject_store.py
 python3 plugin/quota_service.py
 python3 plugin/sealed_auth_store.py
+python3 plugin/authorization_coordinator.py
+python3 plugin/production_vault.py
 python3 scripts/validate_repo.py
 ```
 
