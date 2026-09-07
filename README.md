@@ -7,7 +7,7 @@
 [![Разработка](https://img.shields.io/badge/development-v3.0-8250df)](CHANGELOG.md#30--in-development)
 [![Stable](https://img.shields.io/badge/stable-v2.2-0969da)](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.2)
 [![Проверка](https://github.com/misyukdima/openai-work-codex-regulator/actions/workflows/validate.yml/badge.svg)](https://github.com/misyukdima/openai-work-codex-regulator/actions/workflows/validate.yml)
-[![Тесты](https://img.shields.io/badge/regression_tests-218-success)](tests/)
+[![Тесты](https://img.shields.io/badge/regression_tests-230-success)](tests/)
 
 [Последний стабильный релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/latest) · [Использование](docs/USAGE.md) · [Архитектура](docs/ARCHITECTURE.md) · [Changelog](CHANGELOG.md)
 
@@ -140,7 +140,7 @@ trusted Plugin subject
 get_quota_snapshot({})
 ```
 
-Transport намеренно использует low-level `Server`, а не high-level tool argument parser. Это важно для zero-argument contract: неожиданный `{"subject":"..."}` должен дойти до `QuotaToolHandler` и быть отвергнут, а не тихо исчезнуть при разборе аргументов.
+Transport намеренно использует low-level `Server`, а не high-level tool argument parser. Неожиданный `{"subject":"..."}` должен дойти до `QuotaToolHandler` и быть отвергнут, а не тихо исчезнуть при разборе аргументов.
 
 Canonical tool:
 
@@ -161,13 +161,48 @@ mcp==2.1.1
 mcp-types==2.1.1
 ```
 
-SDK сам монтирует Streamable HTTP endpoint и RFC 9728 protected-resource metadata. Репозиторий не реализует собственный OAuth/JWT provider: production получает reviewed `TokenVerifier` и внешний authorization server через deployment composition.
+SDK монтирует Streamable HTTP endpoint и RFC 9728 protected-resource metadata. Python SDK `v2.1.1` пока не предоставляет typed top-level `securitySchemes` в Tool model, поэтому OAuth обязателен на всём `/mcp`, а canonical policy дополнительно зеркалируется в `_meta.securitySchemes` по официальному authenticated-Python pattern OpenAI.
 
-Python SDK `v2.1.1` пока не предоставляет typed top-level `securitySchemes` в Tool model. Поэтому OAuth остаётся обязательным на всём `/mcp`, а canonical policy дополнительно зеркалируется в `_meta.securitySchemes` по официальному authenticated-Python pattern OpenAI. Это compatibility layer, а не замена server-side проверки bearer token.
+## OIDC/JWKS verifier
+
+`plugin/oidc_token_verifier.py` закрывает resource-server сторону production OAuth без превращения репозитория в authorization server.
+
+```text
+external OAuth / OIDC provider
+        ↓ bearer JWT
+OIDCJWKSTokenVerifier
+        ↓
+issuer == configured issuer
+audience == MCP resource
+scope ⊇ quota:read
+exp / nbf valid
+alg ∈ explicit asymmetric allow-list
+kid required
+        ↓
+verified MCP AccessToken
+```
+
+Принципиальные ограничения:
+
+- issuer, audience и JWKS URL задаются только серверной конфигурацией и требуют HTTPS;
+- `HS*` алгоритмы не допускаются;
+- token-supplied `jku`/`x5u` не используются;
+- JWKS set cache имеет bounded TTL, а бессрочный per-key LRU cache отключён;
+- `sub` обязателен и не заменяется email/display name/client id;
+- profile/email/custom claims не передаются дальше без необходимости;
+- ошибки подписи, JWKS или parsing fail-closed и не становятся model-visible diagnostics.
+
+Direct dependency закреплена:
+
+```text
+PyJWT[crypto]==2.13.0
+```
+
+Это уже проходит отдельный runtime self-test в GitHub Actions. При этом сам authorization server / IdP остаётся внешней production-инфраструктурой: репозиторий не хранит signing keys, пароли или OAuth client secrets.
 
 ## Plugin package
 
-Feature-ветка уже содержит официальный package skeleton:
+Feature-ветка содержит официальный package skeleton:
 
 ```text
 .codex-plugin/
@@ -220,19 +255,11 @@ AUTHORIZED | CANCELLED | EXPIRED | FAILED
 
 Повторный Connect одного subject переиспользует один pending flow. Authorization id привязан к trusted subject server-side. Cancel закрывает live auth client, а revoke сначала дожидается остановки активного worker и только затем удаляет durable auth.
 
-MCP OAuth и Codex quota authorization — разные trust boundaries. Валидный MCP bearer идентифицирует caller для нашего backend; он не является Codex quota credential. Если MCP identity уже подтверждена, но Codex auth отсутствует, tool возвращает отдельное состояние `QUOTA_AUTH_REQUIRED / NEEDS_QUOTA_AUTH`.
+MCP OAuth и Codex quota authorization — разные trust boundaries. Валидный MCP bearer идентифицирует caller для нашего backend; он не является Codex quota credential. Если MCP identity подтверждена, но Codex auth отсутствует, tool возвращает `QUOTA_AUTH_REQUIRED / NEEDS_QUOTA_AUTH`.
 
-## Credential isolation
+## Credential isolation, concurrency и recovery
 
-Raw Plugin identity не становится именем каталога или объекта. `plugin/subject_store.py` выводит внутренний key через HMAC-SHA256 с server-held pepper:
-
-```text
-trusted Plugin subject
-        ↓ HMAC(server pepper)
-opaque subject key
-        ↓
-isolated auth state
-```
+Raw Plugin identity не становится именем каталога или объекта. `plugin/subject_store.py` выводит внутренний key через HMAC-SHA256 с server-held pepper.
 
 `plugin/sealed_auth_store.py` хранит durable auth как sealed blob и materialize plaintext только на время операции:
 
@@ -248,25 +275,11 @@ reseal updated auth.json
 plaintext cleanup
 ```
 
-Репозиторий не реализует собственную production-криптографию. `plugin/production_vault.py` принимает внешний audited durable store и внешний KMS/envelope provider. Test cipher намеренно помечен `production_safe=False`.
+`plugin/auth_concurrency.py` сериализует authorization, quota read и revoke по одному opaque subject key. Production требует audited cross-worker lease provider, а durable storage обязан гарантировать atomic replacement sealed blob.
 
-## Concurrency и recovery
+`plugin/auth_recovery.py` фиксирует fail-closed recovery: transient transport failure получает bounded retry; corrupt/missing/rejected auth переходит в `NEEDS_REAUTH`; аварийный выход до reseal не сохраняет частично обновлённый plaintext; неизвестная provider error не превращается в quota snapshot.
 
-`plugin/auth_concurrency.py` сериализует authorization, quota read и revoke по одному opaque subject key. Это защищает managed refresh state от lost-update race.
-
-```text
-subject A: authorize / read / revoke → one subject lease
-subject B: authorize / read / revoke → independent subject lease
-```
-
-`InProcessSubjectLeaseProvider` годится только для CI/single-worker. Production требует audited cross-worker lease provider, а durable storage обязан гарантировать atomic replacement sealed blob.
-
-`plugin/auth_recovery.py` отдельно фиксирует fail-closed recovery:
-
-- transient transport failure получает bounded retry;
-- corrupt/missing/rejected auth переходит в `NEEDS_REAUTH`;
-- аварийный выход до reseal не сохраняет частично обновлённый plaintext;
-- неизвестная provider error не превращается в quota snapshot и не утекает в MCP result.
+Репозиторий не реализует собственную production-криптографию. `plugin/production_vault.py` принимает внешний audited durable store и внешний KMS/envelope provider. Test adapters намеренно помечены `production_safe=False`.
 
 ## Нормализация quota
 
@@ -293,24 +306,6 @@ Automatic telemetry меняет acquisition, а не admission math. Сохра
 - `QUALITY_FLOOR=NON_NEGOTIABLE`;
 - баланс `QUOTA_50_PACE_50` после hard gates.
 
-## Handoff в Work и Codex
-
-```text
-ChatGPT Regulator
-        ↓
-goal + fact pack + scope + no-touch
-        ↓
-tests/evidence + rollback + stop conditions
-        ↓
-Work или Codex
-        ↓
-execution + evidence
-        ↓
-ChatGPT принимает следующее решение
-```
-
-В ordinary executor packet не попадают Plugin credentials, MCP plumbing, quota epoch, trajectory headroom или внутренние quota/pace scores.
-
 ## Текущее состояние
 
 | Слой | Статус | Что есть сейчас |
@@ -324,11 +319,12 @@ ChatGPT принимает следующее решение
 | JIT quota authorization coordinator | ✅ | subject-bound pending flow, cancel/revoke ordering |
 | same-subject serialization | ✅ | lease-protected authorize/read/revoke contract |
 | fail-closed auth recovery | ✅ | bounded retry, NEEDS_REAUTH, no partial reseal |
-| MCP transport | ✅ | Streamable HTTP `/mcp`, bearer principal validation, `quota:read`, exact zero-arg tool |
+| MCP transport | ✅ | Streamable HTTP `/mcp`, bearer boundary, exact zero-arg tool |
+| OIDC/JWKS verifier | ✅ | issuer/audience/scope/lifetime/algorithm verification, bounded JWKS cache |
+| strict v3 release validator | ✅ | 230 contiguous regressions + MCP/OIDC/package gates |
 | Plugin package skeleton | ✅ | `.codex-plugin/plugin.json` + mirrored skill, no fake app id |
-| MCP runtime CI | ✅ | exact `mcp==2.1.1` transport self-test passes |
 | production vault contract | ✅ | external durable store + crypto + cross-worker lease required |
-| real OAuth/IdP + TokenVerifier deployment | 🟡 | deployment/security gate |
+| real OAuth authorization server / IdP deployment | 🟡 | verifier готов; provider registration/deployment ещё не выполнены |
 | real KMS/secret provider deployment | 🟡 | provider-independent contract готов, deployment не выбран |
 | real cross-worker lease deployment | 🟡 | release gate |
 | registered ChatGPT MCP connection | 🟡 | нужен реальный `plugin_asdk_app...` ID; `.app.json` до этого отсутствует |
@@ -360,6 +356,7 @@ scripts/
   quota_telemetry.py
   validate_repo.py
   validate_plugin_package.py
+  validate_v3_release_contract.py
   package_release.py
 
 plugin/
@@ -372,8 +369,10 @@ plugin/
   auth_recovery.py
   production_vault.py
   mcp_transport.py
+  oidc_token_verifier.py
   get_quota_snapshot.tool.json
   requirements-mcp.txt
+  requirements-auth.txt
 
 tests/
   TEST_CASES.md
@@ -383,6 +382,7 @@ tests/
   TEST_CASES_V3_0_CONCURRENCY.md
   TEST_CASES_V3_0_RECOVERY.md
   TEST_CASES_V3_0_MCP.md
+  TEST_CASES_V3_0_OAUTH.md
 ```
 
 Ранние `companion/` и `relay/` компоненты могут оставаться в feature-ветке только как research history. Validator и release contract от них не зависят.
@@ -392,6 +392,7 @@ tests/
 ```bash
 python3 scripts/validate_repo.py
 python3 scripts/validate_plugin_package.py
+python3 scripts/validate_v3_release_contract.py
 python3 plugin/quota_backend.py --self-test
 python3 plugin/sealed_auth_store.py
 python3 plugin/authorization_coordinator.py
@@ -400,16 +401,18 @@ python3 plugin/auth_recovery.py
 python3 plugin/production_vault.py
 python3 -m pip install -r plugin/requirements-mcp.txt
 python3 plugin/mcp_transport.py --self-test
+python3 -m pip install -r plugin/requirements-auth.txt
+python3 plugin/oidc_token_verifier.py --self-test
 python3 scripts/package_release.py
 ```
 
-Сейчас regression suite содержит **218 последовательных сценариев**.
+Сейчас regression suite содержит **230 последовательных сценариев**.
 
 ## История версий
 
 | Версия | Что изменилось | Статус |
 | --- | --- | --- |
-| **v3.0** | ChatGPT Web-only control plane, exact server-side quota telemetry, sealed auth, concurrency/recovery, official MCP transport и Plugin package | В разработке |
+| **v3.0** | ChatGPT Web-only control plane, exact server-side quota telemetry, sealed auth, recovery, official MCP transport, OIDC/JWKS verification и Plugin package | В разработке |
 | **v2.2** | Баланс quota/workflow pace, cumulative trajectory, bounded future advance, independent executor | [Релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.2) |
 | **v2.1** | Adaptive weekly controller, burn estimation, 5h breaker, quality floor | [Релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.1) |
 | **v2.0** | Astra profile, allowance domains, steering и safety semantics | [Релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.0) |
@@ -437,5 +440,5 @@ Regulator не превращает неизвестное значение в �
 ---
 
 <p align="center">
-  <sub>development: <strong>v3.0</strong> · stable: <strong>v2.2</strong> · 218 regression-сценариев</sub>
+  <sub>development: <strong>v3.0</strong> · stable: <strong>v2.2</strong> · 230 regression-сценариев</sub>
 </p>
