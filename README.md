@@ -2,12 +2,12 @@
 
 # OpenAI Work + Codex Regulator
 
-**Skill для ChatGPT Web, который оркестрирует Work/Codex и учитывает их общую квоту без регулярного копирования процентов в чат.**
+**Skill для ChatGPT Web, который оркестрирует Work/Codex и автоматически учитывает их общую квоту без регулярного копирования процентов в чат.**
 
 [![Разработка](https://img.shields.io/badge/development-v3.0-8250df)](CHANGELOG.md#30--in-development)
 [![Stable](https://img.shields.io/badge/stable-v2.2-0969da)](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.2)
 [![Проверка](https://github.com/misyukdima/openai-work-codex-regulator/actions/workflows/validate.yml/badge.svg)](https://github.com/misyukdima/openai-work-codex-regulator/actions/workflows/validate.yml)
-[![Тесты](https://img.shields.io/badge/regression_tests-190-success)](tests/)
+[![Тесты](https://img.shields.io/badge/regression_tests-218-success)](tests/)
 
 [Последний стабильный релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/latest) · [Использование](docs/USAGE.md) · [Архитектура](docs/ARCHITECTURE.md) · [Changelog](CHANGELOG.md)
 
@@ -17,7 +17,7 @@
 
 ## Что это
 
-`openai-work-codex-regulator` работает **только в ChatGPT Web**. ChatGPT остаётся control plane: понимает задачу, выбирает Chat, Work или Codex, решает quota/model/admission и формирует self-contained handoff.
+`openai-work-codex-regulator` работает **только в ChatGPT Web**. ChatGPT остаётся control plane: понимает задачу, выбирает Chat, Work или Codex, принимает quota/model/admission-решение и формирует self-contained handoff.
 
 Work и Codex ничего не устанавливают и не загружают из этого репозитория. Для них skill уже превратил задачу в готовый execution packet.
 
@@ -67,7 +67,7 @@ MANUAL_QUOTA_INPUT=FALLBACK_ONLY
 
 7 сентября 2026 года прошёл P0 на реальном аккаунте ChatGPT Plus.
 
-Одноразовый удалённый runner:
+Одноразовый remote runner:
 
 1. скачал pinned официальный OpenAI Codex CLI;
 2. запустил `codex app-server` в изолированном временном auth state;
@@ -98,9 +98,9 @@ P0 также подтвердил edge case: weekly window может прий�
                        │ get_quota_snapshot()
                        ▼
 ┌────────────────────────────────────────────┐
-│         Regulator Quota Plugin/App         │
+│      Streamable HTTP MCP Plugin/App        │
 │                                            │
-│  authenticated subject · read only         │
+│  OAuth bearer · quota:read · read only     │
 └──────────────────────┬─────────────────────┘
                        ▼
 ┌────────────────────────────────────────────┐
@@ -123,6 +123,64 @@ Plugin является датчиком, а не вторым контролл�
 QUOTA_PLUGIN=READ_ONLY
 PLUGIN_DECISION_AUTHORITY=NONE
 ```
+
+## Официальный MCP transport
+
+`plugin/mcp_transport.py` реализует production-shaped transport на официальном MCP Python SDK.
+
+```text
+POST /mcp
+   ↓
+OAuth bearer gate
+   ↓
+verified AccessToken
+   ↓ issuer + audience/resource + scope + exp/nbf + subject
+trusted Plugin subject
+   ↓
+get_quota_snapshot({})
+```
+
+Transport намеренно использует low-level `Server`, а не high-level tool argument parser. Это важно для zero-argument contract: неожиданный `{"subject":"..."}` должен дойти до `QuotaToolHandler` и быть отвергнут, а не тихо исчезнуть при разборе аргументов.
+
+Canonical tool:
+
+```text
+name = get_quota_snapshot
+input = {}
+scope = quota:read
+readOnlyHint = true
+destructiveHint = false
+idempotentHint = true
+openWorldHint = false
+```
+
+MCP dependencies закреплены точно:
+
+```text
+mcp==2.1.1
+mcp-types==2.1.1
+```
+
+SDK сам монтирует Streamable HTTP endpoint и RFC 9728 protected-resource metadata. Репозиторий не реализует собственный OAuth/JWT provider: production получает reviewed `TokenVerifier` и внешний authorization server через deployment composition.
+
+Python SDK `v2.1.1` пока не предоставляет typed top-level `securitySchemes` в Tool model. Поэтому OAuth остаётся обязательным на всём `/mcp`, а canonical policy дополнительно зеркалируется в `_meta.securitySchemes` по официальному authenticated-Python pattern OpenAI. Это compatibility layer, а не замена server-side проверки bearer token.
+
+## Plugin package
+
+Feature-ветка уже содержит официальный package skeleton:
+
+```text
+.codex-plugin/
+  plugin.json
+
+skills/
+  openai-work-codex-regulator/
+    SKILL.md
+```
+
+Packaged `SKILL.md` должен быть byte-for-byte равен корневому `SKILL.md`; отдельный validator проверяет это в CI и внутри release ZIP.
+
+`.app.json` пока **намеренно отсутствует**. Его нельзя заполнять выдуманным идентификатором: связь с MCP добавляется только после реальной регистрации connection в ChatGPT и получения технического `plugin_asdk_app...` ID.
 
 ## Server-side backend
 
@@ -150,7 +208,7 @@ P0 показал, что чтение сразу после `login/completed` �
 
 ## JIT Connect/Auth
 
-`plugin/authorization_coordinator.py` отделяет авторизацию от model-facing quota tool.
+`plugin/authorization_coordinator.py` отделяет quota-account authorization от model-facing quota tool.
 
 ```text
 STARTING
@@ -162,11 +220,11 @@ AUTHORIZED | CANCELLED | EXPIRED | FAILED
 
 Повторный Connect одного subject переиспользует один pending flow. Authorization id привязан к trusted subject server-side. Cancel закрывает live auth client, а revoke сначала дожидается остановки активного worker и только затем удаляет durable auth.
 
-Device-code authorization держит живой `codex app-server` между challenge и подтверждением пользователя. Поэтому текущий coordinator честно считается pinned-worker core; multi-replica routing/lease остаётся отдельным release gate.
+MCP OAuth и Codex quota authorization — разные trust boundaries. Валидный MCP bearer идентифицирует caller для нашего backend; он не является Codex quota credential. Если MCP identity уже подтверждена, но Codex auth отсутствует, tool возвращает отдельное состояние `QUOTA_AUTH_REQUIRED / NEEDS_QUOTA_AUTH`.
 
 ## Credential isolation
 
-Raw ChatGPT identity не становится именем каталога или объекта. `plugin/subject_store.py` выводит внутренний key через HMAC-SHA256 с server-held pepper:
+Raw Plugin identity не становится именем каталога или объекта. `plugin/subject_store.py` выводит внутренний key через HMAC-SHA256 с server-held pepper:
 
 ```text
 trusted Plugin subject
@@ -192,38 +250,23 @@ plaintext cleanup
 
 Репозиторий не реализует собственную production-криптографию. `plugin/production_vault.py` принимает внешний audited durable store и внешний KMS/envelope provider. Test cipher намеренно помечен `production_safe=False`.
 
-## Concurrency boundary
+## Concurrency и recovery
 
-Два параллельных quota read одного subject не должны materialize одну и ту же старую версию auth state и затем перезаписывать свежий token refresh.
-
-`plugin/auth_concurrency.py` сериализует authorization, quota read и revoke по одному opaque subject key.
+`plugin/auth_concurrency.py` сериализует authorization, quota read и revoke по одному opaque subject key. Это защищает managed refresh state от lost-update race.
 
 ```text
 subject A: authorize / read / revoke → one subject lease
 subject B: authorize / read / revoke → independent subject lease
 ```
 
-`InProcessSubjectLeaseProvider` годится только для CI и single-worker P1. Production требует audited cross-worker lease provider. Durable storage дополнительно обязан гарантировать atomic replacement sealed blob.
+`InProcessSubjectLeaseProvider` годится только для CI/single-worker. Production требует audited cross-worker lease provider, а durable storage обязан гарантировать atomic replacement sealed blob.
 
-## Canonical tool contract
+`plugin/auth_recovery.py` отдельно фиксирует fail-closed recovery:
 
-```text
-get_quota_snapshot()
-```
-
-Ноль model-provided identity arguments. Сервер сам связывает authenticated Plugin subject с авторизованным quota account.
-
-Tool не умеет:
-
-- покупать credits;
-- запускать paid reset;
-- менять spending controls;
-- выполнять generic Codex RPC;
-- запускать shell;
-- выбирать Work/Codex или model tier;
-- запускать или отменять authorization flow через model arguments.
-
-Machine-readable contract: `plugin/get_quota_snapshot.tool.json`.
+- transient transport failure получает bounded retry;
+- corrupt/missing/rejected auth переходит в `NEEDS_REAUTH`;
+- аварийный выход до reseal не сохраняет частично обновлённый plaintext;
+- неизвестная provider error не превращается в quota snapshot и не утекает в MCP result.
 
 ## Нормализация quota
 
@@ -266,7 +309,7 @@ execution + evidence
 ChatGPT принимает следующее решение
 ```
 
-В ordinary executor packet не попадают Plugin credentials, quota epoch, trajectory headroom, telemetry plumbing или внутренние quota/pace scores.
+В ordinary executor packet не попадают Plugin credentials, MCP plumbing, quota epoch, trajectory headroom или внутренние quota/pace scores.
 
 ## Текущее состояние
 
@@ -275,22 +318,35 @@ ChatGPT принимает следующее решение
 | v2.2 quota controller | ✅ | deterministic decision engine |
 | quota normalization | ✅ | weekly/5h/other/missing semantics |
 | server-side Plus P0 | ✅ | exact `codex` quota read через official Codex |
-| Plugin backend core | ✅ | read-only JSON-RPC + normalized output |
-| subject isolation core | ✅ | opaque HMAC keys, model identity override blocked |
-| sealed auth lifecycle | ✅ | temporary plaintext, reseal, cleanup, fail-closed test adapters |
-| JIT authorization coordinator | ✅ | pending flow reuse, subject binding, cancel/revoke ordering |
+| quota backend core | ✅ | official Codex JSON-RPC + normalized output |
+| subject isolation | ✅ | opaque HMAC keys, model identity override blocked |
+| sealed auth lifecycle | ✅ | temporary plaintext, reseal, cleanup |
+| JIT quota authorization coordinator | ✅ | subject-bound pending flow, cancel/revoke ordering |
 | same-subject serialization | ✅ | lease-protected authorize/read/revoke contract |
+| fail-closed auth recovery | ✅ | bounded retry, NEEDS_REAUTH, no partial reseal |
+| MCP transport | ✅ | Streamable HTTP `/mcp`, bearer principal validation, `quota:read`, exact zero-arg tool |
+| Plugin package skeleton | ✅ | `.codex-plugin/plugin.json` + mirrored skill, no fake app id |
+| MCP runtime CI | ✅ | exact `mcp==2.1.1` transport self-test passes |
 | production vault contract | ✅ | external durable store + crypto + cross-worker lease required |
-| real KMS/secret provider deployment | 🟡 | provider-independent contract готов, реальный backend ещё не выбран и не проверен |
+| real OAuth/IdP + TokenVerifier deployment | 🟡 | deployment/security gate |
+| real KMS/secret provider deployment | 🟡 | provider-independent contract готов, deployment не выбран |
 | real cross-worker lease deployment | 🟡 | release gate |
-| ChatGPT Web Connect/Auth E2E | 🟡 | нужен реальный Plugin/App integration test |
-| crash/recovery + refresh/revoke E2E | 🟡 | следующий security gate |
+| registered ChatGPT MCP connection | 🟡 | нужен реальный `plugin_asdk_app...` ID; `.app.json` до этого отсутствует |
+| ChatGPT Web Connect/Auth E2E | 🟡 | plan/workspace-dependent integration test |
+| refresh/revoke/logout + crash recovery E2E | 🟡 | на выбранной production infrastructure |
 | threat model / security review | 🟡 | release gate |
 | v3.0 release | ⛔ | PR в `main` пока рано |
 
 ## Что лежит в репозитории
 
 ```text
+.codex-plugin/
+  plugin.json
+
+skills/
+  openai-work-codex-regulator/
+    SKILL.md
+
 SKILL.md
 references/
   10_WEEKLY_QUOTA_CONTROLLER.md
@@ -299,13 +355,12 @@ references/
   13_CHATGPT_PLUGIN_AND_QUOTA_BACKEND.md
   SOURCE_MAP.md
 
-docs/
-  USAGE.md
-  ARCHITECTURE.md
-
 scripts/
   weekly_quota_controller.py
   quota_telemetry.py
+  validate_repo.py
+  validate_plugin_package.py
+  package_release.py
 
 plugin/
   quota_backend.py
@@ -314,11 +369,11 @@ plugin/
   sealed_auth_store.py
   authorization_coordinator.py
   auth_concurrency.py
+  auth_recovery.py
   production_vault.py
+  mcp_transport.py
   get_quota_snapshot.tool.json
-
-experiments/
-  p0_headless_quota_probe.py
+  requirements-mcp.txt
 
 tests/
   TEST_CASES.md
@@ -326,6 +381,8 @@ tests/
   TEST_CASES_V3_0.md
   TEST_CASES_V3_0_SECURITY.md
   TEST_CASES_V3_0_CONCURRENCY.md
+  TEST_CASES_V3_0_RECOVERY.md
+  TEST_CASES_V3_0_MCP.md
 ```
 
 Ранние `companion/` и `relay/` компоненты могут оставаться в feature-ветке только как research history. Validator и release contract от них не зависят.
@@ -334,21 +391,25 @@ tests/
 
 ```bash
 python3 scripts/validate_repo.py
+python3 scripts/validate_plugin_package.py
 python3 plugin/quota_backend.py --self-test
 python3 plugin/sealed_auth_store.py
 python3 plugin/authorization_coordinator.py
 python3 plugin/auth_concurrency.py
+python3 plugin/auth_recovery.py
 python3 plugin/production_vault.py
+python3 -m pip install -r plugin/requirements-mcp.txt
+python3 plugin/mcp_transport.py --self-test
 python3 scripts/package_release.py
 ```
 
-Сейчас regression suite содержит **190 последовательных сценариев**.
+Сейчас regression suite содержит **218 последовательных сценариев**.
 
 ## История версий
 
 | Версия | Что изменилось | Статус |
 | --- | --- | --- |
-| **v3.0** | ChatGPT Web-only control plane, exact server-side quota telemetry, JIT auth, sealed subject-isolated backend, concurrency boundary | В разработке |
+| **v3.0** | ChatGPT Web-only control plane, exact server-side quota telemetry, sealed auth, concurrency/recovery, official MCP transport и Plugin package | В разработке |
 | **v2.2** | Баланс quota/workflow pace, cumulative trajectory, bounded future advance, independent executor | [Релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.2) |
 | **v2.1** | Adaptive weekly controller, burn estimation, 5h breaker, quality floor | [Релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.1) |
 | **v2.0** | Astra profile, allowance domains, steering и safety semantics | [Релиз](https://github.com/misyukdima/openai-work-codex-regulator/releases/tag/v2.0) |
@@ -369,12 +430,12 @@ python3 scripts/package_release.py
 
 ## Важное про точность
 
-Regulator не превращает неизвестное значение в удобную цифру. Missing window остаётся `UNAVAILABLE`, stale snapshot остаётся `STALE`, а delayed post-pass meter остаётся `PENDING_BURN`, пока не появится достаточное evidence.
+Regulator не превращает неизвестное значение в удобную цифру. Missing window остаётся `UNAVAILABLE`, stale snapshot остаётся `STALE`, delayed post-pass meter остаётся `PENDING_BURN`, а недействительная или потерянная authorization — `NEEDS_REAUTH`, пока не появится достаточное evidence.
 
 Автоматизация убирает ручную рутину, а не требования к доказательности.
 
 ---
 
 <p align="center">
-  <sub>development: <strong>v3.0</strong> · stable: <strong>v2.2</strong> · 190 regression-сценариев</sub>
+  <sub>development: <strong>v3.0</strong> · stable: <strong>v2.2</strong> · 218 regression-сценариев</sub>
 </p>
