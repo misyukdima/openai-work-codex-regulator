@@ -4,125 +4,115 @@
 
 Major ChatGPT Web orchestration release with automatic Work/Codex quota telemetry.
 
-- Fixed the product boundary: the v3.0 skill runs in **ChatGPT Web only**. Work and Codex are execution surfaces that receive self-contained handoffs; the skill is not a prerequisite for either executor.
-- Made automatic Work/Codex quota telemetry the normal control-plane path with `AUTO_QUOTA_TELEMETRY=DEFAULT` and moved manual snapshots to `MANUAL_QUOTA_INPUT=FALLBACK_ONLY`.
-- Defined the target onboarding as `GitHub Release ZIP → attach in ChatGPT Web → work`. No local Companion, Terminal, Homebrew, CodexBar, localhost, tunnel or OS-specific setup belongs to the production path.
-- Added just-in-time Plugin/App authorization: ChatGPT requests Connect only when a quota-sensitive decision first needs `get_quota_snapshot()`.
-- Proved the server-side Plus quota path in P0 on 2026-09-07. An ephemeral remote runner used the pinned official OpenAI Codex CLI, completed managed ChatGPT authorization, waited for authenticated `account/updated`, called `account/rateLimits/read`, received an exact Plus quota snapshot and deleted temporary auth state.
-- Confirmed missing-window semantics in P0: a weekly `10080`-minute window may exist without a 5-hour window. Missing telemetry stays `UNAVAILABLE`/`null`; v3.0 does not synthesize `0%`.
-- Added `plugin/quota_backend.py`, a read-only server-side core for official `codex app-server`, including the proven auth-readiness boundary, `codex` bucket selection, duration-based window normalization and secret-field exclusion.
-- Added the zero-argument, read-only `plugin/get_quota_snapshot.tool.json`; model input cannot select a subject, account, workspace or credential.
-- Added HMAC-based subject isolation and a trusted `PluginRequestContext`; raw Plugin identity does not become a filesystem/object path and cross-subject auth reuse fails closed.
-- Added `plugin/sealed_auth_store.py`: durable auth is represented as a sealed `auth.json` blob, plaintext exists only in a private temporary `CODEX_HOME`, official refresh state is resealed after successful operations, and temporary plaintext is removed.
-- Kept production cryptography outside the repository. `plugin/production_vault.py` requires an injected audited durable provider and external KMS/envelope provider with an explicit key reference and algorithm id; repository test doubles remain `production_safe=False`.
-- Added `plugin/authorization_coordinator.py` for JIT device-code quota authorization. Duplicate Connect for the same subject reuses one pending flow; authorization ids are subject-bound; cancel closes the live client; revoke waits for the worker before deleting durable auth.
-- Added `plugin/auth_concurrency.py` to serialize authorize/read/revoke for one opaque subject key and prevent lost token-refresh updates. The in-process lease is CI/single-worker only; production requires a cross-worker lease provider.
-- Hardened the production vault contract: durable sealed-blob replacement must be atomic, external crypto must be production-safe, and cross-worker subject serialization is mandatory. Missing any one property fails the production gate.
-- Added `plugin/auth_recovery.py`: transient failures get bounded retry, corrupt/missing/rejected auth becomes `NEEDS_REAUTH`, abnormal materialization exit cannot reseal partial plaintext, and unknown provider errors never become fabricated quota state.
-- Added official Streamable HTTP MCP transport in `plugin/mcp_transport.py`. It uses the low-level MCP `Server`, mounts `/mcp`, requires server-wide OAuth scope `quota:read`, validates verified bearer issuer/resource/scope/expiry/subject, and preserves raw arguments until `QuotaToolHandler` rejects unexpected model input.
-- Changed the quota tool to a closed-world contract: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`.
-- Added exact MCP runtime pins `mcp==2.1.1` and `mcp-types==2.1.1`. GitHub Actions installs those versions and runs the real transport self-test rather than validating an SDK-shaped mock.
-- Added OpenAI-compatible Python OAuth metadata handling: `/mcp` authentication is authoritative server-wide; the canonical `securitySchemes` policy is also mirrored in `_meta.securitySchemes` while Python MCP SDK v2.1.1 lacks a typed top-level field.
-- Added official Plugin package skeleton `.codex-plugin/plugin.json` plus `skills/openai-work-codex-regulator/SKILL.md`. The packaged skill must remain byte-for-byte equal to root `SKILL.md`.
-- Deliberately omitted `.app.json` until ChatGPT returns a real registered MCP connection id beginning `plugin_asdk_app...`; the repository does not ship a fabricated placeholder app id.
-- Added `scripts/validate_plugin_package.py` and extended release ZIP validation so both the repository contract and Plugin package contract pass before and after a clean archive round-trip.
-- Preserved the v2.2 epoch-anchored trajectory, observed-burn estimator, equal quota/pace priority, hard quality floor, 5h circuit breaker and bounded future advance as the mathematical decision engine.
-- Expanded the branch to **218 contiguous regression scenarios** covering Web-only runtime, P0 normalization, subject isolation, sealed auth, JIT authorization, concurrency, recovery, MCP identity, exact zero-argument transport and Plugin packaging.
-- Fixed regression validation so shard filenames do not control global numbering: shard-local numbers must increase, the global set must be unique and contiguous, and new shards can be added without a hidden lexical-order contract.
-- Added dedicated CI gates for repository validation, Plugin package validation, quota backend, sealed auth, authorization coordinator, auth concurrency, recovery, production vault, pinned MCP SDK installation and MCP runtime self-test.
-- Early CodexBar/Companion/relay work remains research history only. It is not normative architecture and is not a release prerequisite.
+### Runtime and product boundary
 
-> Development gate: exact server-side Plus quota acquisition, credential lifecycle, recovery policy, official MCP transport and Plugin package structure are implemented and regression-tested. v3.0 remains development-only until a real OAuth/IdP + `TokenVerifier`, production KMS/secret backend and cross-worker lease provider are deployed, ChatGPT returns a real MCP connection id and Connect/Auth E2E passes, refresh/revoke/logout and crash recovery are verified on that infrastructure, and security review is complete before Pull Request to `main`.
+- Fixed the v3.0 runtime to **ChatGPT Web only**. Work and Codex are execution surfaces that receive self-contained handoffs; neither executor needs the regulator skill installed.
+- Made automatic Work/Codex quota telemetry the normal control-plane path with `AUTO_QUOTA_TELEMETRY=DEFAULT`; manual snapshots remain fallback only.
+- Defined the end-user onboarding target as `GitHub Release ZIP → attach in ChatGPT Web → work` with no Companion, CodexBar, Terminal, Homebrew, localhost, tunnel or OS-specific setup.
+- Added just-in-time Plugin/App connection: ChatGPT asks for Connect/Auth only when a quota-sensitive decision first needs `get_quota_snapshot()`.
+
+### Server-side quota proof and backend
+
+- Proved the server-side Plus quota path in P0 on 2026-09-07. An ephemeral remote runner used the pinned official OpenAI Codex CLI, completed managed ChatGPT authorization, waited for authenticated `account/updated`, called `account/rateLimits/read`, received an exact Plus `codex` quota snapshot and deleted temporary auth state.
+- Confirmed missing-window semantics: weekly telemetry may exist without a 5-hour window. Missing values stay `UNAVAILABLE/null`; v3 never fabricates `0%`.
+- Added `plugin/quota_backend.py` with the proven auth-readiness boundary, `codex` bucket selection, duration-based window normalization and secret-field exclusion.
+- Added exact zero-argument `plugin/get_quota_snapshot.tool.json`; model input cannot select a subject, account, workspace or credential.
+
+### Credential isolation and recovery
+
+- Added HMAC-based subject isolation and trusted `PluginRequestContext`; raw Plugin identity does not become a path and cross-subject auth reuse fails closed.
+- Added `plugin/sealed_auth_store.py`: durable auth is a sealed `auth.json` blob, plaintext exists only in a private temporary `CODEX_HOME`, refreshed state is resealed after successful operations and plaintext is removed afterward.
+- Kept production cryptography outside the repository. `plugin/production_vault.py` requires an injected durable provider, external KMS/envelope provider and cross-worker lease provider; repository test doubles remain `production_safe=False`.
+- Added `plugin/authorization_coordinator.py` for JIT quota-account authorization, subject-bound pending flows, cancel/revoke ordering and scoped cleanup.
+- Added `plugin/auth_concurrency.py` to serialize authorize/read/revoke per opaque subject and prevent lost refresh-state updates.
+- Added `plugin/auth_recovery.py`: bounded transient retry, `NEEDS_REAUTH` for corrupt/missing/rejected auth, no partial reseal after abnormal materialization exit and no raw provider errors in model-visible quota output.
+
+### Official MCP transport and Plugin package
+
+- Added Streamable HTTP MCP transport in `plugin/mcp_transport.py` on the official Python MCP SDK.
+- The transport uses the low-level `Server`, mounts `/mcp`, requires OAuth scope `quota:read`, validates the verified bearer principal and preserves raw tool arguments until the security boundary rejects unexpected input.
+- Changed the quota tool to a closed-world contract: `readOnlyHint=true`, `destructiveHint=false`, `idempotentHint=true`, `openWorldHint=false`.
+- Exact MCP runtime pins are `mcp==2.1.1` and `mcp-types==2.1.1`; GitHub Actions installs those versions and runs the real transport self-test.
+- Added OpenAI-compatible Python auth metadata handling: OAuth is authoritative server-wide and the canonical `securitySchemes` policy is mirrored in `_meta.securitySchemes` while the SDK lacks a typed top-level field.
+- Added `.codex-plugin/plugin.json` plus `skills/openai-work-codex-regulator/SKILL.md`; packaged skill content must remain byte-for-byte equal to root `SKILL.md`.
+- Deliberately omitted `.app.json` until ChatGPT returns a real registered connection id beginning `plugin_asdk_app...`.
+
+### OIDC/JWKS verification
+
+- Added `plugin/oidc_token_verifier.py`, a production-shaped OAuth resource-server adapter.
+- Enforced exact HTTPS issuer/resource/JWKS configuration, explicit asymmetric algorithms, mandatory `kid`, no token-directed `jku`/`x5u`, required `quota:read`, `exp/nbf/iss/aud` validation, stable `sub`, privacy-minimized downstream claims and bounded JWKS caching.
+- Exact direct dependency is `PyJWT[crypto]==2.13.0`.
+- Verification fails closed; the repository does not become an authorization server, password database, token issuer or signing-key owner.
+
+### IdP deployment preflight
+
+- Added `plugin/idp_preflight.py` to validate OAuth/OIDC discovery metadata before production MCP startup.
+- Preflight requires exact HTTPS issuer, HTTPS authorization/token/JWKS endpoints, PKCE `S256`, advertised `quota:read`, and a valid client registration mode: CIMD, DCR or explicitly reviewed predefined client.
+- Added `plugin/production_runtime.py` to compose metadata preflight → `OIDCJWKSTokenVerifier` → MCP transport from provider-neutral `REGULATOR_OIDC_*` configuration.
+- Chose Auth0 as the first staging target without making Auth0 a core dependency.
+- Added `deployment/auth0-staging.example.json`, a secret-free maintainer profile. Validator checks actual JSON key names for secret fields instead of false-positive substring matching in documentation values.
+- Added `docs/IDP_DEPLOYMENT.md` with the manual staging sequence and explicit live evidence gates.
+- Static preflight intentionally does **not** claim success for resource→audience binding, exact ChatGPT redirect allowlisting, authorized public `/mcp` access or wrong-resource rejection. Those remain live E2E gates.
+
+### Validation and regression coverage
+
+- Added `scripts/validate_plugin_package.py` and strict `scripts/validate_v3_release_contract.py`; release ZIP validation runs the dependency-free contracts both before packaging and after clean extraction.
+- Fixed regression validation so shard filenames do not control global numbering.
+- Expanded the feature branch to **240 contiguous regression scenarios**, including Web-only runtime, P0 normalization, subject isolation, sealed auth, JIT authorization, concurrency, recovery, MCP identity, OIDC verification and IdP deployment preflight.
+- Added dedicated CI gates for repository/package/release validation, quota backend, sealed auth, authorization coordinator, concurrency, recovery, production vault, pinned MCP runtime, OIDC verifier, IdP discovery preflight and production runtime composition.
+- Early CodexBar/Companion/relay work remains research history only and is not a release prerequisite.
+
+### Controller continuity
+
+- Preserved the v2.2 epoch-anchored trajectory, observed-burn estimator, equal quota/pace priority, hard quality floor, independent 5h breaker and bounded future advance as the mathematical decision engine.
+
+> Development gate: server-side Plus quota acquisition, credential lifecycle, concurrency/recovery, official MCP transport, OIDC resource-server verification, Plugin package structure and static IdP deployment preflight are implemented and regression-tested. v3.0 remains development-only until a real Auth0 development tenant and public HTTPS MCP staging deployment pass live OAuth/resource/redirect checks, ChatGPT returns a real `plugin_asdk_app...` connection id and Connect/Auth E2E succeeds, production KMS and cross-worker lease providers are deployed, refresh/revoke/logout and crash recovery are verified on that infrastructure, and security review is complete before Pull Request to `main`.
 
 ## 2.2 — 2026-09-06
 
 Balanced quota-and-workflow orchestration release based on real v2.1 field testing.
 
-- Replaced v2.1's fixed 24h control slice as a hard pass-admission boundary with one epoch-anchored absolute cumulative quota trajectory.
-- Preserved 24h as the normal `BASE_LOOKAHEAD_HOURS` pacing target while adding a bounded `MAX_ADVANCE_HOURS=72` future-advance horizon; recomputation remains anchored and cannot reissue a fresh daily budget after each pass.
-- Added equal-priority optimization after hard safety/quality gates: `BALANCED_PRIORITY=QUOTA_50_PACE_50`.
-- Added normalized `PACE_RISK_IF_DEFER` and `QUOTA_RISK_IF_LAUNCH` so a critical-path pass may use bounded future capacity when the quota risk of launching is no greater than the workflow risk of waiting.
-- Added `QUOTA_DECISION=LAUNCH_WITH_ADVANCE`; a nominal 24h target overrun is no longer automatically treated as a reason to wait a full day.
-- Kept hard upper protection: a pass beyond `MAX_ADVANCE_HEADROOM_PP` cannot launch merely because pace risk is high.
-- Added a progress-preserving fallback ladder: before pure defer, attempt useful Chat planning/review/handoff, accepted-evidence reuse, quality-preserving split/batching or an already approved non-shared execution path.
-- Added explicit `MEANINGFUL_PROGRESS_WITHOUT_AGENTIC` so quota conservation does not unnecessarily halt the overall workflow.
-- Split regulator **control plane** from downstream **execution plane** with `CONTROL_PLANE_OWNER`, `HANDOFF_SELF_CONTAINED=YES` and `EXECUTOR_SKILL_REQUIRED=NO`.
-- Fixed Chat→Codex / Chat→Work handoffs so downstream executors are not required to have, locate, load or apply the regulator skill.
-- Removed quota epoch, trajectory headroom, quota/pace risk and other control-plane internals from ordinary Work/Codex executor prompt templates.
-- Added normative `references/11_ORCHESTRATION_AND_HANDOFF.md` for self-contained cross-surface contracts.
-- Updated Codex discipline so already accepted Chat/Work fact packs are reused instead of duplicating policy/research reads.
-- Retained `QUALITY_FLOOR=NON_NEGOTIABLE`, separate 5h circuit breaker, paid-reset authorization gates, robust observed-burn estimator and aggregate shared-pool accounting.
-- Changed pending-meter semantics: `PENDING_BURN=YES` blocks another large future advance but does not block safe non-agentic Chat progress.
-- Reworked `SKILL.md`, routing, runway, recovery, architecture, usage guide and source map around the balanced controller and executor independence.
-- Re-verified first-party OpenAI Work/Codex shared-allowance, usage/reporting, paid-reset, model and safety sources on 2026-09-06.
-- Added regression tests 96–115 for executor independence, control-plane leakage, continuous trajectory, bounded advance, equal-risk decisions, hard quality/5h protection, pending telemetry and productive alternatives.
-- Validator upgraded for v2.2: requires 115 contiguous tests across the base and v2.2 regression files, imports the new controller self-test, validates orchestration invariants, and fails if ordinary executor templates leak quota-control fields or require the regulator skill.
+- Replaced the fixed 24h slice as a hard admission boundary with one epoch-anchored cumulative quota trajectory.
+- Kept 24h as normal look-ahead while adding bounded future advance up to 72h of the same trajectory.
+- Added equal-priority quota/pace balancing after hard safety and quality gates.
+- Added `LAUNCH_WITH_ADVANCE`, progress-preserving fallback paths and `MEANINGFUL_PROGRESS_WITHOUT_AGENTIC`.
+- Split ChatGPT control plane from downstream Work/Codex execution plane; handoffs are self-contained and executors do not need the regulator skill.
+- Retained the hard quality floor, independent 5h circuit breaker, paid-reset authorization gates, robust observed-burn estimator and aggregate shared-pool accounting.
+- Added tests 96–115 and validator coverage for executor independence, bounded advance, quality/5h protection, pending telemetry and productive alternatives.
 
 ## 2.1 — 2026-09-05
 
-Adaptive weekly quota-control release focused on keeping shared Work/Codex capacity usable throughout the entire reset window without lowering the minimum sufficient quality of work.
+Adaptive weekly quota controller release.
 
-- Added normative `references/10_WEEKLY_QUOTA_CONTROLLER.md` with a stateful feedback controller driven by first-party weekly meter/reset telemetry rather than guessed token/model coefficients.
-- Added `QUOTA_EPOCH_ID` and reset/re-anchor semantics: normal, paid, banked/promotional or allowance-architecture reset events invalidate old daily/slice state without erasing completed project gates.
-- Replaced static average-per-pass budgeting with fixed rolling 24h `CONTROL_SLICE_BUDGET_PP` envelopes that cannot be reissued after every pass.
-- Added dynamic early risk reserve: 10 percentage points maximum, capped at 50% of current remaining allowance and linearly released through the final 72 hours.
-- Added reproducible fresh-week reference math: first 24h envelope is `90 * 24 / 168 = 12.857142857 pp`; exact planned spending releases the reserve by reset instead of stranding it.
-- Added stateful `SLICE_SPENT_PP`, `SLICE_HEADROOM_PP` and `EFFECTIVE_SLICE_HEADROOM_PP` accounting with meter-granularity buffer.
-- Added `QUALITY_FLOOR=NON_NEGOTIABLE`: quota pressure may remove duplication/context/waste but must not force an insufficient model, remove required sources/tests or accept an incomplete gate. If quality does not fit, `QUOTA_DECISION=DEFER_FOR_QUALITY`.
-- Added conservative `B_SAFE` pass-burn estimator using strong bootstrap margins for 1–2 samples and median/MAD/P80 planning for 3–5 recent compatible observations.
-- Separated aggregate continuity accounting from exact pass attribution: `MIXED` intervals still reduce shared weekly headroom even when they cannot be assigned exactly to one pass.
-- Added independent 5-hour circuit-breaker handling; weekly percentage points and 5h percentage points are never compared as the same denominator.
-- Added `PENDING_BURN` / post-pass meter-state handling so large passes are not stacked on top of plausibly lagged aggregate telemetry.
-- Added scheduled-work reservations so recurring Work/Codex burn is subtracted before interactive capacity is admitted.
-- Added `CONTINUITY_FEASIBLE` to prevent false promises of useful daily work when the minimum quality-sufficient pass is mathematically larger than current headroom.
-- Added paid weekly reset policy: `PAID_WEEKLY_RESET_ALLOWED=NO` by default; an authorized reset is a separate class-4 money action and starts a new quota epoch.
-- Reworked `references/02_SHARED_QUOTA_AND_CREDITS.md` and `references/04_RUNWAY_AND_BURN.md` to separate project runway from quota runway and incorporate current reset/usage-reporting behavior.
-- Added executable reference calculator `scripts/weekly_quota_controller.py` with deterministic self-tests for fresh-week math, reserve release, feedback, sparse/robust burn estimates and quality-floor admission.
-- Updated `SKILL.md`, README, architecture and usage guide around adaptive weekly control.
-- Re-verified first-party OpenAI Work/Codex shared-allowance, usage-dashboard, paid-reset, reporting and credit sources on 2026-09-05.
-- Added regression tests 76–95 covering daily envelopes, meter semantics, stateful slices, reserve release, quota epochs, paid reset, mixed attribution, burn estimation, quality preservation, 5h separation, lagged telemetry and scheduled reservations.
-- Validator upgraded for v2.1: requires the weekly-controller reference/script, at least 95 contiguous tests, v2.1 provenance and a successful imported controller self-test.
+- Added `references/10_WEEKLY_QUOTA_CONTROLLER.md`, quota epochs, rolling pacing, dynamic reserve release and the quality floor.
+- Added conservative pass-burn estimation, aggregate continuity accounting, 5h circuit-breaker handling, `PENDING_BURN`, scheduled-work reservations and continuity feasibility checks.
+- Added paid weekly reset policy and executable controller reference `scripts/weekly_quota_controller.py`.
+- Added tests 76–95 and corresponding validator gates.
 
 ## 2.0 — 2026-09-05
 
-Major Astra architecture release for ChatGPT Work + Codex.
+Major Astra architecture release.
 
-- Added GPT-6 Astra as a separate exceptional `MODEL_PROFILE=ASTRA`, not as a fourth Luna/Terra/Sol tier.
-- Added `ASTRA_JUSTIFIED`, `ASTRA_SCOPE_BOUND`, Astra fallback and explicit admission rules so the strongest model is not the default for ordinary work.
-- Added `ALLOWANCE_DOMAIN=WORK_CODEX|CHAT_PRO|API|UNKNOWN` to prevent mixing Chat/GPT-6 Pro message allowances with Work/Codex shared agentic usage.
-- Added Astra-specific quota discipline based on current OpenAI guidance that Astra can consume Work/Codex allowance faster than GPT-5.6 Sol.
-- Added Codex Astra readiness gate (`CODEX_CLIENT_ASTRA_READY`) and first-party source tracking for the current minimum Codex client requirement.
-- Added steering transaction semantics for mid-turn requirement changes: same-gate refinements may continue, while gate/class/action expansion requires re-admission.
-- Added `SAFETY_STATE=PAUSED_FOR_REVIEW` recovery semantics. Astra safety pauses/stops are review events, not ordinary capability failures, and must not be bypassed by switching surface/model or blind retry.
-- Added Astra cyber-sensitive authorization posture: stronger capability never expands target ownership, permissions, write scope or external-action approval.
-- Added long-context discipline: large context is a capability, not permission to dump entire histories; compact handoffs and bounded evidence packages remain the default.
-- Added normative `references/09_ASTRA_EXECUTION.md` with Astra admission, burn, steering, safety-pause and fallback rules.
-- Reworked `references/08_MODEL_TIER_ROUTING.md` into a two-axis router: `MODEL_PROFILE` plus optional `MODEL_TIER`.
-- Re-verified first-party OpenAI model, Work/Codex, rate-card and safety sources on 2026-09-05.
-- Updated shared quota reference for current Astra rollout and plan-dependent included/credit usage semantics without hardcoding personal limits.
-- Reworked executable `SKILL.md`, architecture and usage guide around allowance-domain separation and Astra admission.
-- Added regression tests 61–75 for Astra admission, Work/Codex quota separation, Fast cost posture, Codex client readiness, steering, safety pauses, cyber authorization, long context and fallback.
-- Validator upgraded to v2.0 invariants and now requires the Astra execution reference and at least 75 contiguous regression tests.
-- Release remains immutable and ships the validated portable ZIP plus SHA-256 checksum.
+- Added `MODEL_PROFILE=ASTRA`, Astra justification/scope gates, allowance-domain separation and steering transaction semantics.
+- Added safety-pause recovery, cyber-sensitive authorization posture, long-context discipline and dedicated Astra execution reference.
+- Added tests 61–75 and v2.0 source/validator updates.
 
 ## 1.2 — 2026-08-22
 
-Model-tier routing release focused on quota efficiency and explicit model/effort selection for ChatGPT Work and Codex.
+Model-tier routing release.
 
-- Added normative `references/08_MODEL_TIER_ROUTING.md` with capability-tier routing based on durable `Luna / Terra / Sol` roles rather than permanent generation IDs.
-- Added normalized model availability/tier/effort/fallback fields.
-- Added Luna/Terra/Sol routing defaults and max/ultra escalation gates.
-- Added staged mixed-tier policy and regression tests 51–60.
+- Added durable Luna / Terra / Sol capability roles, effort selection, fallback rules and mixed-tier policy.
+- Added tests 51–60.
 
 ## 1.1 — 2026-08-22
 
-Quota-saving routing, security and release-hardening release focused on keeping Work/Codex use efficient without weakening safety boundaries.
+Quota-saving routing and security hardening release.
 
-- Added bounded Chat routing, `WHY_AGENTIC` / `VALUE_OUTPUT`, surface override, prompt-injection/account/download safety, shared-pool attribution, paid-credit eligibility, capability snapshots, scheduled-task hardening and release automation.
-- Added regression tests 37–50.
+- Added bounded Chat routing, safety/account/download gates, shared-pool attribution, paid-credit eligibility, capability snapshots and scheduled-task hardening.
+- Added tests 37–50.
 
 ## 1.0 — 2026-08-21
 
 Initial release.
 
-- Added Chat / Work / Codex routing, shared agentic pool, quota snapshot, project runway, Work/browser/Codex discipline, class 0–4, failure recovery and official source map.
+- Added Chat / Work / Codex routing, shared agentic pool, quota snapshot, project runway, execution discipline, risk classes and failure recovery.
