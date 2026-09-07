@@ -39,3 +39,7 @@ jobs:
         run: python3 -m pip install --disable-pip-version-check -r plugin/requirements-auth.txt
       - name: Validate OIDC/JWKS token verifier
         run: python3 plugin/oidc_token_verifier.py --self-test
+      - name: Validate IdP discovery preflight
+        run: python3 plugin/idp_preflight.py --self-test
+      - name: Validate production runtime composition
+        run: python3 plugin/production_runtime.py --self-test

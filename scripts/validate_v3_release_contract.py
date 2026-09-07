@@ -3,7 +3,7 @@
 
 The historical repository validator intentionally remains generation-wide. This
 validator is the v3 development/release gate for the ChatGPT Web Plugin path and
-must move forward with every new security/transport layer.
+must move forward with every new security/transport/deployment layer.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MIN_V3_TESTS = 230
+MIN_V3_TESTS = 240
 
 REQUIRED = [
     ".codex-plugin/plugin.json",
@@ -23,12 +23,17 @@ REQUIRED = [
     "plugin/get_quota_snapshot.tool.json",
     "plugin/mcp_transport.py",
     "plugin/oidc_token_verifier.py",
+    "plugin/idp_preflight.py",
+    "plugin/production_runtime.py",
     "plugin/requirements-mcp.txt",
     "plugin/requirements-auth.txt",
     "scripts/validate_plugin_package.py",
     "scripts/validate_v3_release_contract.py",
+    "docs/IDP_DEPLOYMENT.md",
+    "deployment/auth0-staging.example.json",
     "tests/TEST_CASES_V3_0_MCP.md",
     "tests/TEST_CASES_V3_0_OAUTH.md",
+    "tests/TEST_CASES_V3_0_IDP.md",
 ]
 
 errors: list[str] = []
@@ -43,10 +48,16 @@ for rel in REQUIRED:
     if not (ROOT / rel).is_file():
         errors.append(f"missing v3 release file: {rel}")
 
-# The v3 suite is global and must be unique/contiguous regardless of shard names.
 all_numbers: list[int] = []
 for path in sorted((ROOT / "tests").glob("TEST_CASES*.md")):
-    nums = [int(n) for n in re.findall(r"^## Test (\d+)\b", path.read_text(encoding="utf-8"), re.M)]
+    nums = [
+        int(n)
+        for n in re.findall(
+            r"^## Test (\d+)\b",
+            path.read_text(encoding="utf-8"),
+            re.M,
+        )
+    ]
     if nums != sorted(nums):
         errors.append(f"{path.relative_to(ROOT)} test numbers are not increasing")
     all_numbers.extend(nums)
@@ -83,7 +94,10 @@ try:
     if tool.get("name") != "get_quota_snapshot":
         errors.append("canonical quota tool name drifted")
     input_schema = tool.get("inputSchema") or {}
-    if input_schema.get("properties") != {} or input_schema.get("additionalProperties") is not False:
+    if (
+        input_schema.get("properties") != {}
+        or input_schema.get("additionalProperties") is not False
+    ):
         errors.append("quota tool must remain exact zero-argument")
     annotations = tool.get("annotations") or {}
     expected_annotations = {
@@ -95,7 +109,9 @@ try:
     for key, expected in expected_annotations.items():
         if annotations.get(key) is not expected:
             errors.append(f"quota tool annotation drifted: {key}")
-    if tool.get("securitySchemes") != [{"type": "oauth2", "scopes": ["quota:read"]}]:
+    if tool.get("securitySchemes") != [
+        {"type": "oauth2", "scopes": ["quota:read"]}
+    ]:
         errors.append("quota tool OAuth security scheme drifted")
 except Exception as exc:
     errors.append(f"quota tool JSON invalid: {exc}")
@@ -136,18 +152,78 @@ for needle in [
     if needle not in oidc:
         errors.append(f"OIDC verifier missing marker: {needle}")
 
+preflight = read("plugin/idp_preflight.py")
+for needle in [
+    "class IDPPreflightConfig",
+    'client_registration_mode: str = "cimd"',
+    '"code_challenge_methods_supported"',
+    '"S256"',
+    '"scopes_supported"',
+    '"quota:read"',
+    '"client_id_metadata_document_supported"',
+    '"registration_endpoint"',
+    '"authorization_response_iss_parameter_supported"',
+    '"resource_parameter_echoed_and_bound_to_access_token_audience"',
+    '"exact_chatgpt_redirect_uri_allowlisted"',
+]:
+    if needle not in preflight:
+        errors.append(f"IdP preflight missing marker: {needle}")
+
+runtime = read("plugin/production_runtime.py")
+for needle in [
+    "class ProductionRuntimeConfig",
+    "REGULATOR_OIDC_ISSUER_URL",
+    "REGULATOR_OIDC_METADATA_URL",
+    "REGULATOR_MCP_RESOURCE_URL",
+    "REGULATOR_OIDC_CLIENT_SECRET",
+    "REGULATOR_OAUTH_CLIENT_SECRET",
+    "run_preflight",
+    "OIDCJWKSTokenVerifier",
+    "MCPTransportConfig",
+    "build_production_app",
+]:
+    if needle not in runtime:
+        errors.append(f"production runtime missing marker: {needle}")
+
+try:
+    profile = json.loads(read("deployment/auth0-staging.example.json"))
+    if profile.get("provider") != "auth0":
+        errors.append("staging profile provider must be auth0")
+    if profile.get("required_scope") != "quota:read":
+        errors.append("staging profile required scope drifted")
+    if profile.get("pkce") != "S256":
+        errors.append("staging profile PKCE drifted")
+    if profile.get("secrets_in_repository") is not False:
+        errors.append("staging profile must explicitly forbid repository secrets")
+    serialized = json.dumps(profile).lower()
+    for secret_marker in [
+        "client_secret",
+        "access_token",
+        "refresh_token",
+        "private_key",
+    ]:
+        if secret_marker in serialized:
+            errors.append(
+                f"staging profile must not contain secret field: {secret_marker}"
+            )
+except Exception as exc:
+    errors.append(f"Auth0 staging profile invalid: {exc}")
+
 workflow = read(".github/workflows/validate.yml")
 for needle in [
     "Validate v3 release contract",
     "Install pinned OAuth verifier dependencies",
     "Validate OIDC/JWKS token verifier",
+    "Validate IdP discovery preflight",
+    "Validate production runtime composition",
     "plugin/requirements-auth.txt",
     "plugin/oidc_token_verifier.py --self-test",
+    "plugin/idp_preflight.py --self-test",
+    "plugin/production_runtime.py --self-test",
 ]:
     if needle not in workflow:
-        errors.append(f"CI workflow missing v3 OAuth gate: {needle}")
+        errors.append(f"CI workflow missing v3 auth/deployment gate: {needle}")
 
-# Plugin package must not fabricate a ChatGPT app connection id.
 plugin_manifest = read(".codex-plugin/plugin.json")
 if "plugin_asdk_app" in plugin_manifest:
     errors.append("plugin manifest must not fabricate a registered app id")
@@ -162,5 +238,5 @@ if errors:
 
 print(
     "v3 release-contract validation OK — "
-    f"{len(numbers)} contiguous tests, MCP + OIDC/JWKS gates present"
+    f"{len(numbers)} contiguous tests, MCP + OIDC/JWKS + IdP gates present"
 )
