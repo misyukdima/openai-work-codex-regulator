@@ -47,12 +47,14 @@ Major ChatGPT Web orchestration release with automatic Work/Codex quota telemetr
 ### IdP deployment preflight
 
 - Added `plugin/idp_preflight.py` to validate OAuth/OIDC discovery metadata before production MCP startup.
-- Preflight requires exact HTTPS issuer, HTTPS authorization/token/JWKS endpoints, PKCE `S256`, advertised `quota:read`, and a valid client registration mode: CIMD, DCR or explicitly reviewed predefined client.
+- Preflight requires exact HTTPS issuer, HTTPS authorization/token/JWKS endpoints, PKCE `S256` and a valid client registration mode: CIMD, DCR or explicitly reviewed predefined client.
+- Corrected custom API scope discovery after the real Auth0 staging pass: `quota:read` remains mandatory for the target API and access token, but its absence from authorization-server `scopes_supported` no longer causes a false static failure. Preflight reports advertisement state and keeps the actual scope grant as a live E2E gate.
+- Kept RFC 9207 issuer identification as the preferred staging requirement for stable ChatGPT CIMD identity and redirect behavior; advertised support still requires a live authorization-response check.
 - Added `plugin/production_runtime.py` to compose metadata preflight → `OIDCJWKSTokenVerifier` → MCP transport from provider-neutral `REGULATOR_OIDC_*` configuration.
 - Chose Auth0 as the first staging target without making Auth0 a core dependency.
 - Added `deployment/auth0-staging.example.json`, a secret-free maintainer profile. Validator checks actual JSON key names for secret fields instead of false-positive substring matching in documentation values.
 - Added `docs/IDP_DEPLOYMENT.md` with the manual staging sequence and explicit live evidence gates.
-- Static preflight intentionally does **not** claim success for resource→audience binding, exact ChatGPT redirect allowlisting, authorized public `/mcp` access or wrong-resource rejection. Those remain live E2E gates.
+- Static preflight intentionally does **not** claim success for scope grant, resource→audience binding, exact ChatGPT redirect allowlisting, authorized public `/mcp` access or wrong-resource rejection. Those remain live E2E gates.
 
 ### Validation and regression coverage
 
@@ -66,7 +68,7 @@ Major ChatGPT Web orchestration release with automatic Work/Codex quota telemetr
 
 - Preserved the v2.2 epoch-anchored trajectory, observed-burn estimator, equal quota/pace priority, hard quality floor, independent 5h breaker and bounded future advance as the mathematical decision engine.
 
-> Development gate: server-side Plus quota acquisition, credential lifecycle, concurrency/recovery, official MCP transport, OIDC resource-server verification, Plugin package structure and static IdP deployment preflight are implemented and regression-tested. v3.0 remains development-only until a real Auth0 development tenant and public HTTPS MCP staging deployment pass live OAuth/resource/redirect checks, ChatGPT returns a real `plugin_asdk_app...` connection id and Connect/Auth E2E succeeds, production KMS and cross-worker lease providers are deployed, refresh/revoke/logout and crash recovery are verified on that infrastructure, and security review is complete before Pull Request to `main`.
+> Development gate: server-side Plus quota acquisition, credential lifecycle, concurrency/recovery, official MCP transport, OIDC resource-server verification, Plugin package structure and static IdP deployment preflight are implemented and regression-tested. v3.0 remains development-only until the Auth0 development tenant and public HTTPS MCP staging deployment pass live OAuth/resource/scope/redirect checks, ChatGPT returns a real `plugin_asdk_app...` connection id and Connect/Auth E2E succeeds, production KMS and cross-worker lease providers are deployed, refresh/revoke/logout and crash recovery are verified on that infrastructure, and security review is complete before Pull Request to `main`.
 
 ## 2.2 — 2026-09-06
 
@@ -76,7 +78,7 @@ Balanced quota-and-workflow orchestration release based on real v2.1 field testi
 - Kept 24h as normal look-ahead while adding bounded future advance up to 72h of the same trajectory.
 - Added equal-priority quota/pace balancing after hard safety and quality gates.
 - Added `LAUNCH_WITH_ADVANCE`, progress-preserving fallback paths and `MEANINGFUL_PROGRESS_WITHOUT_AGENTIC`.
-- Split ChatGPT control plane from downstream Work/Codex execution plane; handoffs are self-contained and executors do not need the regulator skill.
+- Split ChatGPT control plane from downstream Work/Codex execution plane; handoffs are self-contained and executors do not need regulator.
 - Retained the hard quality floor, independent 5h circuit breaker, paid-reset authorization gates, robust observed-burn estimator and aggregate shared-pool accounting.
 - Added tests 96–115 and validator coverage for executor independence, bounded advance, quality/5h protection, pending telemetry and productive alternatives.
 
