@@ -5,9 +5,9 @@ This module validates authorization-server metadata before a deployment is
 allowed to expose the Regulator MCP resource. It intentionally does not create
 clients, issue tokens, manage users, or implement an authorization server.
 
-Static discovery can prove advertised capabilities. It cannot prove the live
-ChatGPT flow, exact redirect allow-listing, or resource-to-audience binding;
-those remain explicit E2E gates.
+Static discovery can prove advertised capabilities. It cannot prove custom API
+scope grantability, the live ChatGPT flow, exact redirect allow-listing, or
+resource-to-audience binding; those remain explicit E2E gates.
 """
 
 from __future__ import annotations
@@ -149,6 +149,12 @@ def _string_set(value: Any, field: str) -> set[str]:
     return {item for item in value if item}
 
 
+def _optional_string_set(value: Any, field: str) -> tuple[set[str], bool]:
+    if value is None:
+        return set(), False
+    return _string_set(value, field), True
+
+
 def validate_metadata(
     metadata: dict[str, Any],
     config: IDPPreflightConfig,
@@ -172,13 +178,21 @@ def validate_metadata(
     if "S256" not in pkce_methods:
         raise IdPPreflightError("authorization server must advertise PKCE S256")
 
-    scopes = _string_set(metadata.get("scopes_supported"), "scopes_supported")
-    missing_scopes = set(config.required_scopes) - scopes
-    if missing_scopes:
-        raise IdPPreflightError(
-            "authorization server does not advertise required scope(s): "
-            + ", ".join(sorted(missing_scopes))
-        )
+    # RFC 8414/OIDC discovery is not a reliable registry for provider-specific
+    # custom API permissions. Auth0, for example, can issue a custom API scope
+    # that is configured on the target API without listing it in the OIDC
+    # `scopes_supported` array. Absence therefore cannot be treated as proof
+    # that the scope is unavailable. The live authorize/token exchange remains
+    # authoritative and must prove that every required scope is granted.
+    scopes, scopes_field_present = _optional_string_set(
+        metadata.get("scopes_supported"), "scopes_supported"
+    )
+    required_scope_set = set(config.required_scopes)
+    advertised_required_scopes = sorted(required_scope_set & scopes)
+    missing_advertised_scopes = sorted(required_scope_set - scopes)
+    required_scope_advertisement = (
+        "ADVERTISED" if not missing_advertised_scopes else "NOT_ADVERTISED"
+    )
 
     token_auth_methods = _string_set(
         metadata.get("token_endpoint_auth_methods_supported"),
@@ -230,6 +244,10 @@ def validate_metadata(
         "jwks_uri": jwks_uri,
         "resource": config.resource_url,
         "required_scopes": list(config.required_scopes),
+        "scopes_supported_field_present": scopes_field_present,
+        "required_scope_advertisement": required_scope_advertisement,
+        "advertised_required_scopes": advertised_required_scopes,
+        "missing_advertised_scopes": missing_advertised_scopes,
         "pkce": "S256",
         "client_registration_mode": mode,
         "compatible_token_endpoint_auth_methods": sorted(compatible_methods),
@@ -240,10 +258,11 @@ def validate_metadata(
         "static_preflight_proves": [
             "metadata issuer/endpoints",
             "PKCE S256 advertisement",
-            "required scope advertisement",
+            "required-scope discovery advertisement status only",
             "registration-mode metadata",
         ],
         "live_e2e_required": [
+            "required_scope_requested_and_granted_in_access_token",
             "resource_parameter_echoed_and_bound_to_access_token_audience",
             "exact_chatgpt_redirect_uri_allowlisted",
             "real_chatgpt_connection_registration",
@@ -263,13 +282,15 @@ def run_preflight(
 
 
 def self_test() -> None:
+    # Model the observed Auth0 shape: the custom API permission is configured on
+    # the resource server but is not necessarily listed in OIDC discovery.
     base_metadata = {
         "issuer": "https://tenant.example/",
         "authorization_endpoint": "https://tenant.example/authorize",
         "token_endpoint": "https://tenant.example/oauth/token",
         "jwks_uri": "https://tenant.example/.well-known/jwks.json",
         "code_challenge_methods_supported": ["S256"],
-        "scopes_supported": ["openid", "quota:read"],
+        "scopes_supported": ["openid", "profile", "email"],
         "token_endpoint_auth_methods_supported": ["none", "private_key_jwt"],
         "client_id_metadata_document_supported": True,
         "registration_endpoint": "https://tenant.example/oidc/register",
@@ -298,11 +319,25 @@ def self_test() -> None:
     assert report["status"] == "PASS"
     assert report["pkce"] == "S256"
     assert report["resource"] == "https://quota.example/mcp"
-    assert fetcher.calls == [config.metadata_url]
+    assert report["required_scope_advertisement"] == "NOT_ADVERTISED"
+    assert report["missing_advertised_scopes"] == ["quota:read"]
     assert (
-        "resource_parameter_echoed_and_bound_to_access_token_audience"
+        "required_scope_requested_and_granted_in_access_token"
         in report["live_e2e_required"]
     )
+    assert fetcher.calls == [config.metadata_url]
+
+    advertised = dict(base_metadata)
+    advertised["scopes_supported"] = ["openid", "quota:read"]
+    advertised_report = run_preflight(config, fetcher=StaticFetcher(advertised))
+    assert advertised_report["required_scope_advertisement"] == "ADVERTISED"
+    assert advertised_report["missing_advertised_scopes"] == []
+
+    no_scope_field = dict(base_metadata)
+    no_scope_field.pop("scopes_supported")
+    no_scope_report = run_preflight(config, fetcher=StaticFetcher(no_scope_field))
+    assert no_scope_report["scopes_supported_field_present"] is False
+    assert no_scope_report["required_scope_advertisement"] == "NOT_ADVERTISED"
 
     def expect_failure(
         metadata: dict[str, Any], cfg: IDPPreflightConfig = config
@@ -319,10 +354,6 @@ def self_test() -> None:
 
     bad = dict(base_metadata)
     bad["code_challenge_methods_supported"] = ["plain"]
-    expect_failure(bad)
-
-    bad = dict(base_metadata)
-    bad["scopes_supported"] = ["openid"]
     expect_failure(bad)
 
     bad = dict(base_metadata)

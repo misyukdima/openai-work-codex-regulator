@@ -4,6 +4,7 @@
   "core_dependency": false,
   "client_registration_mode": "cimd",
   "required_scope": "quota:read",
+  "required_scope_discovery_advertisement": "advisory",
   "pkce": "S256",
   "require_rfc9207_issuer_identification": true,
   "resource_binding": "aud",
@@ -15,6 +16,7 @@
     "REGULATOR_MCP_RESOURCE_URL"
   ],
   "live_e2e_gates": [
+    "required_scope_requested_and_granted_in_access_token",
     "resource_parameter_echoed_and_bound_to_access_token_audience",
     "exact_chatgpt_redirect_uri_allowlisted",
     "real_chatgpt_connection_registration",

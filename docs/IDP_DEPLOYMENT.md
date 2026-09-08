@@ -77,14 +77,17 @@ PASS означает только то, что discovery metadata соглас�
 - exact issuer;
 - HTTPS authorization/token/JWKS endpoints;
 - PKCE `S256`;
-- scope `quota:read`;
+- состояние advertisement для `quota:read`;
 - совместимый token endpoint auth method;
 - выбранный client registration mode;
 - RFC 9207 issuer identification, если он включён в deployment policy.
 
+`quota:read` остаётся обязательным permission target API, но его отсутствие в authorization-server `scopes_supported` не является static failure. Некоторые IdP, включая наблюдаемый Auth0 custom API profile, не публикуют custom API permissions в OIDC discovery. Preflight в таком случае возвращает `required_scope_advertisement=NOT_ADVERTISED`, а реальный authorize/token E2E обязан доказать, что `quota:read` был запрошен и присутствует в выданном access token.
+
 PASS не доказывает полноценный OAuth flow. До release отдельно проверяются:
 
 ```text
+required_scope_requested_and_granted_in_access_token
 resource_parameter_echoed_and_bound_to_access_token_audience
 exact_chatgpt_redirect_uri_allowlisted
 real_chatgpt_connection_registration
@@ -107,11 +110,12 @@ deployment/auth0-staging.example.json
 
 1. `issuer` совпадает посимвольно с `REGULATOR_OIDC_ISSUER_URL`.
 2. `code_challenge_methods_supported` содержит `S256`.
-3. `scopes_supported` содержит `quota:read`.
+3. `quota:read` существует в Custom API permissions и разрешён для third-party user-delegated access; его наличие в OIDC `scopes_supported` считается дополнительным evidence, а не обязательным discovery field.
 4. Выбранный registration mode реально поддерживается.
-5. Если включён RFC 9207 gate, authorization responses действительно возвращают exact `iss`, а не только рекламируют capability в metadata.
+5. Если включён RFC 9207 gate, authorization responses действительно возвращают exact `iss`, а metadata публикует `authorization_response_iss_parameter_supported=true`.
 6. `resource`, который ChatGPT передаёт в authorization/token request, привязывается к access token для нашего MCP, обычно через `aud`.
 7. Exact redirect URI копируется из ChatGPT app management и добавляется в allowlist IdP. Его не нужно угадывать или хардкодить заранее.
+8. Выданный access token содержит `quota:read`; отсутствие scope в token — fail независимо от static discovery.
 
 ## Resource server runtime
 
@@ -169,7 +173,9 @@ Staging IdP/MCP gate закрывается только при наличии e
 ```text
 IDP_DISCOVERY_PREFLIGHT=PASS
 PKCE_S256=PASS
+REQUIRED_SCOPE_GRANT=PASS
 RESOURCE_TO_AUDIENCE_BINDING=PASS
+RFC9207_ISSUER_IDENTIFICATION=PASS
 EXACT_CHATGPT_REDIRECT_ALLOWLISTED=PASS
 MCP_BEARER_VERIFICATION=PASS
 CONNECT_AUTH_TOKEN_EXCHANGE=PASS

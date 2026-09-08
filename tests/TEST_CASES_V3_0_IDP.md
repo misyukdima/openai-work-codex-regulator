@@ -6,8 +6,8 @@ Given configured issuer `I`, discovered metadata must report the exact same `iss
 ## Test 232 — PKCE S256 is mandatory
 The authorization-server metadata must advertise `S256` in `code_challenge_methods_supported`. `plain` alone is insufficient.
 
-## Test 233 — quota scope must be advertised
-The authorization-server metadata must advertise `quota:read`. Missing scope support fails before deployment.
+## Test 233 — custom API scope discovery is advisory, not authoritative
+The target API still requires `quota:read`, but absence of that custom permission from authorization-server `scopes_supported` must not fail static discovery. Preflight reports `NOT_ADVERTISED` and keeps `required_scope_requested_and_granted_in_access_token` as a mandatory live E2E gate.
 
 ## Test 234 — CIMD capability must be explicit
 When `client_registration_mode=cimd`, metadata must advertise `client_id_metadata_document_supported=true` and a compatible token-endpoint authentication method.
@@ -25,7 +25,7 @@ When stable issuer identification is required, metadata must advertise `authoriz
 `REGULATOR_OIDC_CLIENT_SECRET` and `REGULATOR_OAUTH_CLIENT_SECRET` are invalid in the MCP resource-server runtime. Authorization-server credentials remain outside this process and outside the repository.
 
 ## Test 239 — static discovery does not claim live resource binding
-A successful metadata preflight still reports live E2E gates for `resource` propagation, access-token audience binding, exact ChatGPT redirect allow-listing and the real Connect/token exchange.
+A successful metadata preflight still reports live E2E gates for required-scope grant, `resource` propagation, access-token audience binding, exact ChatGPT redirect allow-listing and the real Connect/token exchange.
 
 ## Test 240 — app binding requires a real ChatGPT connection id
 `.app.json` remains absent until ChatGPT registers the MCP connection and returns a genuine technical id beginning `plugin_asdk_app...`. Placeholder ids fail the release contract.
