@@ -43,6 +43,10 @@ REQUIRED = [
     "tests/TEST_CASES_V3_0.md",
     "tests/TEST_CASES_V3_0_SECURITY.md",
     "tests/TEST_CASES_V3_0_CONCURRENCY.md",
+    "tests/TEST_CASES_V3_0_PROVIDERS.md",
+    "plugin/deployment_providers.py",
+    "deployment/crypto_helper.py",
+    "scripts/validate_production_providers.py",
     "scripts/weekly_quota_controller.py",
     "scripts/quota_telemetry.py",
     "plugin/__init__.py",
@@ -492,6 +496,43 @@ for needle in [
     if needle not in vault:
         errors.append(f"production vault adapter missing marker: {needle}")
 
+deployment_providers = read("plugin/deployment_providers.py")
+for needle in [
+    "SystemdCredsEnvelopeCryptoProvider",
+    "HardenedAtomicFileBlobProvider",
+    "FlockSubjectLeaseProvider",
+    "PRODUCTION_CRYPTO_SOCKET",
+    "MAX_SEALED_BLOB_BYTES",
+    "SO_PEERCRED",
+]:
+    if needle not in deployment_providers:
+        errors.append(f"deployment providers missing marker: {needle}")
+
+crypto_helper = read("deployment/crypto_helper.py")
+for needle in [
+    "/usr/bin/systemd-creds",
+    "SO_PEERCRED",
+    "CryptoHelperService",
+]:
+    if needle not in crypto_helper:
+        errors.append(f"crypto helper missing marker: {needle}")
+
+for rel, content in [
+    ("plugin/deployment_providers.py", deployment_providers),
+    ("deployment/crypto_helper.py", crypto_helper),
+]:
+    for forbidden in [
+        "import cryptography",
+        "from cryptography",
+        "AESGCM",
+        "Fernet",
+        "Crypto.Cipher",
+        "from Crypto",
+        "import Crypto",
+    ]:
+        if forbidden in content:
+            errors.append(f"{rel} contains forbidden crypto import/primitive: {forbidden}")
+
 
 def run_module_self_test(path: Path, module_name: str, label: str) -> None:
     if not path.is_file():
@@ -518,6 +559,7 @@ for path, module_name, label in [
     (ROOT / "plugin" / "authorization_coordinator.py", "authorization_coordinator_validation", "authorization coordinator"),
     (ROOT / "plugin" / "auth_concurrency.py", "auth_concurrency_validation", "auth concurrency"),
     (ROOT / "plugin" / "production_vault.py", "production_vault_validation", "production vault adapter"),
+    (ROOT / "scripts" / "validate_production_providers.py", "validate_production_providers_validation", "production providers validation"),
 ]:
     run_module_self_test(path, module_name, label)
 
