@@ -101,8 +101,8 @@ class CryptoHelperService:
         allowed_uid_override: int | None = None,
         client_timeout: float = CLIENT_IO_TIMEOUT_SECONDS,
     ) -> None:
-        self.socket_path = Path(socket_path).resolve()
-        self.is_production = (self.socket_path == PRODUCTION_SOCKET.resolve())
+        self.socket_path = Path(os.path.abspath(os.fspath(socket_path)))
+        self.is_production = (self.socket_path == PRODUCTION_SOCKET)
         self.client_timeout = float(client_timeout)
         self.running = False
         self._server_sock: socket.socket | None = None
@@ -140,12 +140,19 @@ class CryptoHelperService:
             return
 
         parent = self.socket_path.parent
-        if parent != PRODUCTION_PARENT.resolve():
+        if parent != PRODUCTION_PARENT:
             raise RuntimeError(f"Invalid production socket parent: {parent}")
-        if not parent.is_dir() or parent.is_symlink():
-            raise RuntimeError(f"Production socket parent {parent} is not a regular directory")
 
-        st = os.lstat(parent)
+        try:
+            st = os.lstat(parent)
+        except OSError as exc:
+            raise RuntimeError(f"Cannot stat production socket parent {parent}: {exc}") from exc
+
+        if stat.S_ISLNK(st.st_mode):
+            raise RuntimeError(f"Production socket parent {parent} must not be a symbolic link")
+        if not stat.S_ISDIR(st.st_mode):
+            raise RuntimeError(f"Production socket parent {parent} is not a directory")
+
         if st.st_uid != 0:
             raise RuntimeError(f"Production socket parent must be root-owned (UID 0), got {st.st_uid}")
         if stat.S_IMODE(st.st_mode) != 0o750:
@@ -280,6 +287,8 @@ class CryptoHelperService:
         self._server_sock.bind(str(self.socket_path))
 
         sock_st = os.lstat(self.socket_path)
+        if not stat.S_ISSOCK(sock_st.st_mode):
+            raise RuntimeError(f"Bound filesystem object at {self.socket_path} is not an AF_UNIX socket")
         self._socket_inode = (sock_st.st_dev, sock_st.st_ino)
 
         # Apply ownership and mode: root:regulator 0660
@@ -292,6 +301,10 @@ class CryptoHelperService:
 
         if self.is_production:
             st_post = os.lstat(self.socket_path)
+            if not stat.S_ISSOCK(st_post.st_mode):
+                raise RuntimeError(
+                    f"Production socket post-permission type check failed: {self.socket_path} is not a socket"
+                )
             if st_post.st_uid != 0 or st_post.st_gid != self.socket_gid:
                 raise RuntimeError(
                     f"Production socket ownership verification failed: UID {st_post.st_uid}, GID {st_post.st_gid}"
@@ -329,13 +342,23 @@ class CryptoHelperService:
                     self._server_sock.close()
                 except OSError:
                     pass
-            if os.path.lexists(self.socket_path):
-                try:
-                    curr_st = os.lstat(self.socket_path)
-                    if self._socket_inode is not None and (curr_st.st_dev, curr_st.st_ino) == self._socket_inode:
-                        self.socket_path.unlink()
-                except OSError:
-                    pass
+            self._cleanup_socket()
+
+    def _cleanup_socket(self) -> None:
+        """Safely unlink socket strictly verifying AF_UNIX socket type, device, and inode."""
+        if self._socket_inode is None:
+            return
+        if not os.path.lexists(self.socket_path):
+            return
+        try:
+            curr_st = os.lstat(self.socket_path)
+            if (
+                stat.S_ISSOCK(curr_st.st_mode)
+                and (curr_st.st_dev, curr_st.st_ino) == self._socket_inode
+            ):
+                self.socket_path.unlink()
+        except OSError:
+            pass
 
 
 def main() -> None:

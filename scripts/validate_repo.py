@@ -515,6 +515,9 @@ for needle in [
     "CryptoHelperService",
     "CLIENT_IO_TIMEOUT_SECONDS",
     "_socket_inode",
+    "stat.S_ISSOCK",
+    "stat.S_ISLNK",
+    "_cleanup_socket",
 ]:
     if needle not in crypto_helper:
         errors.append(f"crypto helper missing marker: {needle}")
@@ -538,6 +541,9 @@ for rel, content in [
 for forbidden in [
     "--no-ask-password",
     "cmd_compat",
+    "PRODUCTION_SOCKET.resolve()",
+    "PRODUCTION_PARENT.resolve()",
+    ".resolve()",
 ]:
     if forbidden in crypto_helper:
         errors.append(f"crypto helper contains forbidden option/retry: {forbidden}")

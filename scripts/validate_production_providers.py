@@ -521,7 +521,40 @@ def test_crypto_helper_regressions() -> None:
         finally:
             os.chown = orig_chown
 
-        # Test 267: safe startup pre-existing socket cleanup with lstat validation
+        # Test 267: lexical production parent validation and safe startup socket check
+        real_parent = temp_dir / "real_parent"
+        real_parent.mkdir(mode=0o750)
+        sym_parent = temp_dir / "sym_parent"
+        sym_parent.symlink_to(real_parent)
+        fake_prod_sock = sym_parent / "crypto.sock"
+
+        orig_prod_parent = helper_mod.PRODUCTION_PARENT
+        orig_prod_socket = helper_mod.PRODUCTION_SOCKET
+        orig_pwd_getpwnam = pwd.getpwnam
+        try:
+            helper_mod.PRODUCTION_PARENT = sym_parent
+            helper_mod.PRODUCTION_SOCKET = fake_prod_sock
+            pwd.getpwnam = lambda name: type("MockPwd", (), {"pw_uid": os.getuid(), "pw_gid": os.getgid()})()
+
+            # Constructor must classify exact lexical path as production
+            svc_lexical = CryptoHelperService(socket_path=fake_prod_sock)
+            assert svc_lexical.is_production is True, "Constructor must derive production mode from lexical path"
+
+            # validate_environment must reject symlinked lexical parent
+            try:
+                svc_lexical.validate_environment()
+                raise AssertionError("validate_environment must fail-closed on symlinked parent")
+            except RuntimeError as exc:
+                assert "symbolic link" in str(exc) or "symlink" in str(exc).lower()
+
+            # Target directory must remain untouched (no socket created or unlinked)
+            assert not (real_parent / "crypto.sock").exists()
+            assert not fake_prod_sock.exists()
+        finally:
+            helper_mod.PRODUCTION_PARENT = orig_prod_parent
+            helper_mod.PRODUCTION_SOCKET = orig_prod_socket
+            pwd.getpwnam = orig_pwd_getpwnam
+
         fake_prod_existing = temp_dir / "existing_file.sock"
         fake_prod_existing.write_text("regular file masquerading as socket")
         svc_startup = CryptoHelperService(socket_path=fake_prod_existing, allowed_uid_override=os.getuid())
@@ -534,7 +567,29 @@ def test_crypto_helper_regressions() -> None:
             assert "not a socket" in str(exc)
         assert fake_prod_existing.is_file(), "Unsafe startup must NOT unlink non-socket file"
 
-        # Test 268: safe shutdown socket cleanup with device and inode verification
+        # Post-bind socket type verification explicitly required
+        svc_post_bind = CryptoHelperService(socket_path=temp_dir / "post_bind.sock", allowed_uid_override=os.getuid())
+        svc_post_bind.is_production = True
+        svc_post_bind.validate_environment = lambda: None
+        orig_lstat = os.lstat
+        def mock_lstat_post_bind(p, *a, **kw):
+            st = orig_lstat(p, *a, **kw)
+            if str(p) == str(temp_dir / "post_bind.sock"):
+                mock_mode = stat.S_IMODE(st.st_mode) | stat.S_IFREG
+                return os.stat_result((mock_mode, st.st_ino, st.st_dev, st.st_nlink, st.st_uid, st.st_gid, st.st_size, st.st_atime, st.st_mtime, st.st_ctime))
+            return st
+        os.lstat = mock_lstat_post_bind
+        try:
+            svc_post_bind.run()
+            raise AssertionError("Post-bind non-socket must raise RuntimeError")
+        except RuntimeError as exc:
+            assert "not an AF_UNIX socket" in str(exc) or "not a socket" in str(exc)
+        finally:
+            os.lstat = orig_lstat
+            if (temp_dir / "post_bind.sock").exists():
+                (temp_dir / "post_bind.sock").unlink()
+
+        # Test 268: safe shutdown socket cleanup with socket type, device, and inode verification
         fake_prod_shutdown = temp_dir / "shutdown.sock"
         svc_shutdown = CryptoHelperService(socket_path=fake_prod_shutdown, allowed_uid_override=os.getuid())
         th = threading.Thread(target=svc_shutdown.run, daemon=True)
@@ -555,6 +610,12 @@ def test_crypto_helper_regressions() -> None:
         svc_shutdown.running = False
         th.join(timeout=2.0)
         assert fake_prod_shutdown.exists(), "Replaced socket must NOT be unlinked on shutdown"
+
+        # Cleanup refuses to unlink non-socket even with SAME dev and inode
+        svc_shutdown._socket_inode = (tampered_st.st_dev, tampered_st.st_ino)
+        svc_shutdown._cleanup_socket()
+        assert fake_prod_shutdown.exists(), "Non-socket with matching dev/ino must survive cleanup"
+        fake_prod_shutdown.unlink()
 
         # Test 269: constructor allowed_uid_override isolation from production mode
         try:
