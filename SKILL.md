@@ -143,6 +143,13 @@ SPEED_MODE=<STANDARD|FAST|UNKNOWN>
 
 Do not conflate MAX reasoning with an ULTRA product preset. Current account/workspace availability wins over static documentation.
 
+```text
+ULTRA_REQUIRED=NO
+SPEED_MODE_DEFAULT=STANDARD
+```
+
+Ultra is optional and only considered when the current product exposes it and parallel decomposition materially helps. Fast is not the default merely to finish sooner; with no task-duration deadline, use it only when latency has explicit value and its allowance impact is acceptable or observed.
+
 ## Quality-first routing
 
 ```text

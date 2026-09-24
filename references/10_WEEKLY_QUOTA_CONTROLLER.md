@@ -4,7 +4,7 @@
 **Verified:** 2026-09-24
 **Status:** normative
 
-The controller keeps the proven weekly percentage-point discipline from v2/v3, but paces by active working minutes instead of raw wall-clock hours.
+The controller keeps weekly percentage-point accounting but paces by active working minutes instead of raw wall-clock hours.
 
 ```text
 QUALITY_FLOOR=NON_NEGOTIABLE
@@ -13,7 +13,7 @@ ACTIVE_LIMITS=DERIVED_FROM_CURRENT_SNAPSHOT
 TASK_DURATION_LIMIT=NONE
 ```
 
-The canonical schedule/runway math is in references/14_WORK_SCHEDULE_RUNWAY.md and scripts/v4_quota_controller.py.
+The canonical implementation is scripts/v4_quota_controller.py.
 
 ## Weekly anchor
 
@@ -26,38 +26,100 @@ CURRENT_WEEKLY_USED_PP=<U>
 CURRENT_ACTIVE_MINUTES_TO_RESET=<A>
 ```
 
-Never recreate a full fresh budget after every pass.
+Do not reissue a fresh daily budget after each pass. Off-hours do not consume planned runway.
 
-## Active limits
+## Schedule
 
-Weekly is the primary runway. Any secondary limit is enforced only if current telemetry reports it. Missing secondary data is not synthesized and is not treated as zero or exhausted.
+Default local schedule:
 
 ```text
-SECONDARY_WINDOW_PRESENT=<YES|NO|UNKNOWN>
+09:00 start
+22:00 normal soft end
+23:00 hard extension end
+MON-SUN
 ```
 
-If YES, enforce it independently. If NO and the weekly window is valid, use weekly-only admission.
+User configuration overrides these defaults. Normal base lookahead uses the soft-day duration; bounded future advance may use the hard-window duration.
 
-## Burn
+## Reserve and headroom
 
-Use observed compatible weekly meter deltas only. Do not convert public API prices, token counts or credit rate cards into weekly percentage points.
+Project policy:
 
-Compatibility dimensions are surface, canonical model id, reasoning effort, execution preset, task class and context band.
+```text
+BASE_WEEKLY_RESERVE_PP=10
+RESERVE_FRACTION_CAP=0.50
+RESERVE_RELEASE_ACTIVE_MINUTES=360
+BASE_LOOKAHEAD_WORKDAYS=1
+MAX_ADVANCE_WORKDAYS=2
+```
 
-One or two observations require conservative bootstrap margins. Three to five may use robust median/MAD/P80 planning. Missing compatible history remains UNKNOWN.
+The reserve releases over the final six active hours. Headroom subtracts observed spend since anchor, meter granularity and already-admitted commitments.
 
-## Headroom
+## Burn estimator
 
-Normal lookahead is one configured active workday; bounded advance is two. Subtract meter granularity and scheduled commitments. A future advance may protect critical-path pace but may not consume the rest of the week early.
+Use at most five recent materially compatible weekly-pp observations.
 
-## Quality
+One sample:
 
-Quota pressure can only choose among independently sufficient execution candidates. If every candidate that fits quota is below the quality floor, defer the agentic pass and continue useful ChatGPT work.
+```text
+B_SAFE = x + max(g, 0.50*x)
+```
+
+Two samples:
+
+```text
+m=max(x1,x2)
+B_SAFE=m+max(g,0.25*m)
+```
+
+Three to five:
+
+```text
+M=median(samples)
+MAD=median(abs(sample-M))
+ROBUST_SIGMA=1.4826*MAD
+P80=empirical 80th percentile
+B_SAFE=max(P80,M+1.645*ROBUST_SIGMA)+g
+```
+
+This is conservative project policy, not a statistical guarantee. Never convert API prices/tokens into weekly pp.
+
+## Admission
+
+Safety, authorization and quality are stronger than quota pacing.
+
+If quality is insufficient:
+
+```text
+DEFER_FOR_QUALITY
+```
+
+If burn is unknown:
+
+```text
+CALIBRATE_OR_PREPARE
+```
+
+If safe burn fits normal active-time headroom:
+
+```text
+LAUNCH_BASE
+```
+
+Otherwise compare the required bounded future advance with pace risk. A gate may use LAUNCH_WITH_ADVANCE only inside max active-time headroom and when the quota risk is no greater than the project cost of deferral.
+
+This preserves useful flow without making the allowance unlimited.
+
+## Active secondary limits
+
+Weekly is the primary runway. Any secondary limit is enforced only if current telemetry reports it. If a valid weekly snapshot contains no secondary window, use weekly-only admission.
+
+Different window percentages are never added.
 
 ## Pending burn
 
-An unchanged aggregate meter immediately after meaningful execution does not prove zero burn. PENDING_BURN=YES blocks another large future advance until telemetry catches up or the next gate is safely small.
+Immediate unchanged aggregate usage does not prove zero burn. PENDING_BURN=YES prevents stacking another large future advance until telemetry resolves or the next pass is safely bounded.
 
-## Reference implementation
+## Progress-preserving fallback
 
-scripts/v4_quota_controller.py
+Before pure waiting: remove duplicate work/context, reuse accepted evidence, batch naturally dependent steps, continue ChatGPT planning/review/handoff, and defer only when no quality-preserving productive path remains.

@@ -54,3 +54,15 @@ BURN_PROFILE_KEY=SURFACE:MODEL_ID:REASONING_EFFORT:EXECUTION_PRESET:TASK_CLASS:C
 ```
 
 No fixed Astra:Sol:Luna conversion ratio is normative.
+
+
+## Ultra and Fast
+
+Ultra is an optional execution preset, not the canonical MAX reasoning enum and not a release requirement. Select it only when currently available and parallel decomposition/independent verification materially improves the gate. A difficult single-agent task first maps to capability + reasoning, not automatically Ultra.
+
+Fast defaults to STANDARD. Since v4 has no per-task duration limit, impatience alone is not a reason to spend more allowance. FAST is justified only when latency has material project value and current account evidence shows the tradeoff is acceptable.
+
+```text
+ULTRA_REQUIRED=NO
+SPEED_MODE_DEFAULT=STANDARD
+```
