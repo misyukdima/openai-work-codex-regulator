@@ -1,7 +1,7 @@
 # Shared agentic usage, credits and first-party snapshot
 
-**Version:** 2.1  
-**Verified:** 2026-09-05  
+**Version:** 3.0 development  
+**Verified:** 2026-09-06  
 **Status:** normative
 
 ## 1. Core architecture
@@ -39,19 +39,28 @@ OpenAI states that Work/Codex usage varies with factors including:
 
 Therefore the regulator must not pretend that one prompt, one token count or one model name has a fixed weekly percentage cost.
 
-The mathematical weekly controller in `references/10_WEEKLY_QUOTA_CONTROLLER.md` is deliberately feedback-based: it plans from first-party meter state and corrects from observed burn.
+The mathematical weekly controller in `references/10_WEEKLY_QUOTA_CONTROLLER.md` is deliberately feedback-based: it plans from aggregate meter state and corrects from observed burn.
 
-## 3. Sources of truth
+## 3. Sources of truth and telemetry transport
 
-For personal Work/Codex allowance state, use:
+For personal Work/Codex allowance state, the underlying authoritative evidence remains current first-party OpenAI account/workspace state, including:
 
-1. current first-party `Settings → Usage / Usage Dashboard` or `Usage & billing`;
+1. current `Settings → Usage / Usage Dashboard` or `Usage & billing`;
 2. current first-party limit/reset banner;
 3. current credit balance / spending controls;
 4. `/status` in Codex as supplemental telemetry where available;
 5. per-chat/per-task usage as supporting evidence where available.
 
 The aggregate first-party allowance meter is stronger evidence for total weekly continuity than a per-chat total. Current OpenAI documentation notes that chat-level usage can be incomplete and that reporting can lag in some products/workspaces.
+
+v3.0 changes **transport**, not meter semantics. When a supported telemetry tool reads the same underlying allowance state and provides a normalized fresh snapshot, the regulator may consume it automatically instead of requiring the user to transcribe the UI manually.
+
+```text
+AUTO_QUOTA_TELEMETRY=DEFAULT
+MANUAL_QUOTA_INPUT=FALLBACK_ONLY
+```
+
+Third-party/local adapters are implementation evidence only. They do not become normative OpenAI product sources and their own pacing/admission opinions are ignored.
 
 Do not infer remaining included allowance from a static rate card.
 
@@ -75,7 +84,8 @@ PAID_WEEKLY_RESET_ALLOWED=<YES|NO>
 OTHER_SHARED_POOL_ACTIVITY=<YES|NO|UNKNOWN>
 CREDIT_ELIGIBILITY_WORK=<CONFIRMED|UNAVAILABLE|UNKNOWN>
 CREDIT_ELIGIBILITY_CODEX=<CONFIRMED|UNAVAILABLE|UNKNOWN>
-SOURCE=<first-party UI/banner/docs>
+QUOTA_TELEMETRY_STATE=<FRESH|STALE|UNAVAILABLE|CONFLICT|UNKNOWN>
+QUOTA_TELEMETRY_SOURCE=<provider|manual|unknown>
 ```
 
 If the meter reports remaining rather than used, normalize explicitly:
@@ -84,20 +94,23 @@ If the meter reports remaining rather than used, normalize explicitly:
 WEEKLY_USED = 100 - WEEKLY_REMAINING
 ```
 
-Never guess the meter semantics from an unlabeled number.
+Never guess meter semantics from an unlabeled number.
 
 ## 5. Snapshot freshness for adaptive control
 
-For ordinary class 0–1 tasks, a quota snapshot remains optional.
+For ordinary class 0–1 Chat work, a quota snapshot remains optional.
 
-For the v2.1 continuity objective:
+For quota-sensitive control:
 
-- starting or re-anchoring the weekly controller requires a fresh first-party weekly used/remaining value and reset time;
-- every meaningful class 2–4 pass should be followed by a new first-party snapshot when available;
-- a large next pass should not launch while the prior pass burn is still `PENDING` on a lagged meter;
-- any detected reset or material reset-time change invalidates the old slice ledger.
+- starting or re-anchoring the weekly controller requires a fresh weekly used/remaining value and reset time;
+- before a meaningful class 2–4 Work/Codex pass, refresh automatic telemetry when available;
+- after a meaningful class 2–4 pass, refresh telemetry when available to observe aggregate burn;
+- a large next pass should not launch while prior meaningful burn is still `PENDING` on a lagged meter;
+- any detected reset or material reset-time change invalidates the old trajectory anchor.
 
 A stale snapshot is not safe merely because it is from the same day.
+
+If automatic telemetry is unavailable, continue useful non-agentic Chat progress. Request a manual first-party snapshot only when an actual quota-sensitive decision cannot be resolved safely without fresh meter state.
 
 ## 6. Paid credits
 
@@ -107,7 +120,7 @@ Default:
 PAID_CREDITS_ALLOWED=NO
 ```
 
-The regulator must not:
+The regulator and telemetry path must not:
 
 - enable Auto top-up;
 - purchase credits;
@@ -145,10 +158,10 @@ Operational rules:
 - never buy an instant reset autonomously;
 - a purchase is a separate class-4 money action;
 - it is not an invisible extension of the current quota epoch;
-- after a reset, discard old `CONTROL_SLICE_*` values and re-anchor from current first-party UI;
+- after a reset, invalidate the old trajectory anchor/state and re-anchor from current normalized first-party telemetry;
 - do not buy a reset simply because the adaptive controller correctly deferred low-value work.
 
-Banked/promotional reset behavior is account/offer specific. Any applied reset is treated as a new quota-epoch event and current UI wins.
+Banked/promotional reset behavior is account/offer specific. Any applied reset is treated as a new quota-epoch event and current first-party state wins.
 
 ## 8. Rate cards and Astra
 
@@ -173,9 +186,9 @@ For exact pass attribution:
 ATTRIBUTION=CLEAN|MIXED|UNKNOWN
 ```
 
-But the daily/weekly continuity controller uses the **total change in the shared weekly meter** inside the same quota epoch.
+But weekly continuity controller uses the **total change in the shared weekly meter** inside the same quota epoch.
 
-That means another Work/Codex/shared-pool task may make pass attribution `MIXED`, while still correctly reducing the current control-slice headroom.
+That means another Work/Codex/shared-pool task may make pass attribution `MIXED`, while still correctly reducing the current trajectory headroom.
 
 This distinction is fundamental:
 
@@ -196,6 +209,7 @@ BROWSER_ACCESS=ON|OFF|UNKNOWN
 NETWORK_ACCESS=ON|OFF|UNKNOWN
 CONNECTED_APP_REQUIRED=<name|NO>
 CONNECTED_APP_PERMISSION=OK|MISSING|UNKNOWN
+QUOTA_TELEMETRY_TOOL=ON|OFF|UNKNOWN
 CODEX_CLIENT_ASTRA_READY=YES|NO|UNKNOWN|N/A
 ```
 

@@ -1,0 +1,25 @@
+{
+  "provider": "auth0",
+  "purpose": "development-staging",
+  "core_dependency": false,
+  "client_registration_mode": "cimd",
+  "required_scope": "quota:read",
+  "required_scope_discovery_advertisement": "advisory",
+  "pkce": "S256",
+  "require_rfc9207_issuer_identification": true,
+  "resource_binding": "aud",
+  "exact_redirect_uri_source": "chatgpt_app_management",
+  "secrets_in_repository": false,
+  "required_runtime_environment": [
+    "REGULATOR_OIDC_ISSUER_URL",
+    "REGULATOR_OIDC_METADATA_URL",
+    "REGULATOR_MCP_RESOURCE_URL"
+  ],
+  "live_e2e_gates": [
+    "required_scope_requested_and_granted_in_access_token",
+    "resource_parameter_echoed_and_bound_to_access_token_audience",
+    "exact_chatgpt_redirect_uri_allowlisted",
+    "real_chatgpt_connection_registration",
+    "connect_authorize_token_exchange"
+  ]
+}

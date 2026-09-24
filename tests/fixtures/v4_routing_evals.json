@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "policy": "v4.0",
+  "cases": [
+    {
+      "id": "mechanical-extract",
+      "task_class": "MECHANICAL",
+      "expected_model": "LUNA",
+      "expected_effort": "LOW"
+    },
+    {
+      "id": "routine-clear-brief",
+      "task_class": "ROUTINE",
+      "expected_model": "LUNA",
+      "expected_effort": "MEDIUM"
+    },
+    {
+      "id": "professional-code",
+      "task_class": "PROFESSIONAL",
+      "expected_model": "SOL",
+      "expected_effort": "MEDIUM"
+    },
+    {
+      "id": "professional-research",
+      "task_class": "PROFESSIONAL",
+      "expected_model": "SOL",
+      "expected_effort": "MEDIUM"
+    },
+    {
+      "id": "complex-debug",
+      "task_class": "COMPLEX",
+      "cross_domain": false,
+      "expected_model": "SOL",
+      "expected_effort": "HIGH"
+    },
+    {
+      "id": "complex-cross-domain",
+      "task_class": "COMPLEX",
+      "cross_domain": true,
+      "expected_model": "ASTRA",
+      "expected_effort": "MEDIUM"
+    },
+    {
+      "id": "critical-security",
+      "task_class": "CRITICAL",
+      "expected_model": "ASTRA",
+      "expected_effort": "HIGH"
+    },
+    {
+      "id": "critical-production",
+      "task_class": "CRITICAL",
+      "expected_model": "ASTRA",
+      "expected_effort": "HIGH"
+    },
+    {
+      "id": "reasoning-failure-sol",
+      "failure": "REASONING_DEPTH",
+      "current_model": "SOL",
+      "expected_action": "SAME_MODEL_HIGHER_EFFORT"
+    },
+    {
+      "id": "capability-failure-sol",
+      "failure": "CAPABILITY",
+      "current_model": "SOL",
+      "expected_action": "STRONGER_MODEL_EQUAL_OR_LOWER_EFFORT"
+    },
+    {
+      "id": "permission-blocker",
+      "failure": "PERMISSION",
+      "expected_action": "STOP_NO_MODEL_ESCALATION"
+    },
+    {
+      "id": "quota-pressure",
+      "task_class": "PROFESSIONAL",
+      "expected_action": "LIGHTEST_QUALITY_SUFFICIENT"
+    },
+    {
+      "id": "missing-secondary-window",
+      "weekly_present": true,
+      "secondary_present": false,
+      "expected_action": "WEEKLY_ONLY"
+    },
+    {
+      "id": "reported-secondary-window",
+      "weekly_present": true,
+      "secondary_present": true,
+      "expected_action": "ENFORCE_BOTH_SEPARATELY"
+    },
+    {
+      "id": "unknown-burn-heavy",
+      "task_class": "CRITICAL",
+      "burn_confidence": "UNKNOWN",
+      "expected_action": "PREPARE_OR_SMALL_CALIBRATION"
+    },
+    {
+      "id": "off-hours",
+      "expected_action": "PACE_BY_ACTIVE_MINUTES"
+    },
+    {
+      "id": "ultra-unavailable",
+      "execution_preset": "ULTRA",
+      "available": false,
+      "expected_action": "FALLBACK_STANDARD_WITHOUT_QUALITY_LOSS"
+    },
+    {
+      "id": "ultra-parallel-value",
+      "execution_preset": "ULTRA",
+      "available": true,
+      "parallel_decomposition_benefit": "HIGH",
+      "expected_action": "OPTIONAL_ULTRA"
+    },
+    {
+      "id": "fast-no-latency-value",
+      "speed_mode": "FAST",
+      "latency_value": "NONE",
+      "expected_action": "STANDARD"
+    },
+    {
+      "id": "fast-material-latency",
+      "speed_mode": "FAST",
+      "latency_value": "HIGH",
+      "expected_action": "CONSIDER_IF_ALLOWANCE_IMPACT_ACCEPTABLE"
+    }
+  ]
+}

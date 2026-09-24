@@ -1,0 +1,116 @@
+name: P0 headless Plus quota probe
+
+on:
+  push:
+    branches:
+      - feat/v3-autonomous-quota-telemetry
+    paths:
+      - experiments/p0_headless_quota_probe.py
+      - .github/workflows/p0-headless-quota-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Ephemeral Codex quota probe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    env:
+      CODEX_VERSION: "0.153.4"
+      CODEX_SHA256: "f479424eca092484dc40d87ae28c44f4cc40234a60045d6131e493800d814a30"
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+
+      - name: Download pinned official Codex CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-x86_64-unknown-linux-musl.tar.gz"
+          curl --fail --location --silent --show-error "$url" --output "$RUNNER_TEMP/codex.tar.gz"
+          printf '%s  %s\n' "$CODEX_SHA256" "$RUNNER_TEMP/codex.tar.gz" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/codex-bin"
+          tar -xzf "$RUNNER_TEMP/codex.tar.gz" -C "$RUNNER_TEMP/codex-bin"
+          bin="$(find "$RUNNER_TEMP/codex-bin" -type f -name 'codex*' | head -n 1)"
+          test -n "$bin"
+          chmod +x "$bin"
+          echo "CODEX_BIN=$bin" >> "$GITHUB_ENV"
+          "$bin" --version
+
+      - name: Start ephemeral probe and prepare device authorization
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CODEX_HOME="$RUNNER_TEMP/regulator-p0-codex-home"
+          export P0_AUTH_FILE="$RUNNER_TEMP/p0-device-auth.json"
+          export P0_QUOTA_FILE="$RUNNER_TEMP/p0-quota.json"
+          RUNNER_TRACKING_ID='' nohup python3 experiments/p0_headless_quota_probe.py >"$RUNNER_TEMP/p0-probe.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/p0-probe.pid"
+          for _ in $(seq 1 60); do
+            if test -s "$P0_AUTH_FILE"; then
+              exit 0
+            fi
+            if ! kill -0 "$(cat "$RUNNER_TEMP/p0-probe.pid")" 2>/dev/null; then
+              cat "$RUNNER_TEMP/p0-probe.log"
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "Timed out waiting for device authorization payload"
+          cat "$RUNNER_TEMP/p0-probe.log"
+          exit 1
+
+      - name: Upload one-time device authorization
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-device-auth
+          path: ${{ runner.temp }}/p0-device-auth.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Wait for authorization and exact quota snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          quota="$RUNNER_TEMP/p0-quota.json"
+          pid="$(cat "$RUNNER_TEMP/p0-probe.pid")"
+          for _ in $(seq 1 300); do
+            if test -s "$quota"; then
+              cat "$RUNNER_TEMP/p0-probe.log"
+              exit 0
+            fi
+            if ! kill -0 "$pid" 2>/dev/null; then
+              cat "$RUNNER_TEMP/p0-probe.log"
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "Timed out waiting for user authorization"
+          cat "$RUNNER_TEMP/p0-probe.log"
+          exit 1
+
+      - name: Upload sanitized quota proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-sanitized-quota
+          path: ${{ runner.temp }}/p0-quota.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Destroy ephemeral auth state
+        if: always()
+        shell: bash
+        run: |
+          if test -f "$RUNNER_TEMP/p0-probe.pid"; then
+            kill "$(cat "$RUNNER_TEMP/p0-probe.pid")" 2>/dev/null || true
+          fi
+          rm -rf "$RUNNER_TEMP/regulator-p0-codex-home" \
+                 "$RUNNER_TEMP/codex-bin" \
+                 "$RUNNER_TEMP/codex.tar.gz" \
+                 "$RUNNER_TEMP/p0-device-auth.json" \
+                 "$RUNNER_TEMP/p0-quota.json" \
+                 "$RUNNER_TEMP/p0-probe.log" \
+                 "$RUNNER_TEMP/p0-probe.pid"
+          echo "Ephemeral P0 auth state deleted."

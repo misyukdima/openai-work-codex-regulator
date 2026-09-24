@@ -31,7 +31,7 @@ references/SOURCE_MAP.md        карта first-party источников
 references/11_ORCHESTRATION...  handoff и разделение control/execution plane
 docs/                           архитектура и руководство пользователя
 tests/                          regression scenarios
-scripts/validate_repo.py        главный repository gate
+scripts/validate_repo_v4.py        главный repository gate
 scripts/package_release.py      сборка и проверка release archive
 scripts/weekly_quota_controller.py
                                 reference implementation quota controller
@@ -76,7 +76,7 @@ test/pending-burn-regression
 
 Это особенно важно для:
 
-- weekly/5h limits и reset behavior;
+- weekly и фактически присутствующие secondary-window limits / reset behavior;
 - shared allowance Work/Codex;
 - paid credits и eligibility;
 - model availability;
@@ -107,7 +107,7 @@ Behavioral fix без теста почти всегда неполон.
 Минимум перед каждым PR:
 
 ```bash
-python3 scripts/validate_repo.py
+python3 scripts/validate_repo_v4.py
 ```
 
 Если затронуты release tooling, packaging или поведение, которое пойдёт в новый релиз, дополнительно:
@@ -149,10 +149,10 @@ Release archive должен пройти round-trip validation. Успешна�
 PR должен показать:
 
 - что происходит в начале, середине и конце quota epoch;
-- как ведёт себя normal 24h look-ahead;
+- как ведёт себя active-work-window look-ahead;
 - что происходит при bounded advance;
 - что происходит при `PENDING_BURN=YES`;
-- почему 5h protection остаётся независимой;
+- почему любая реально присутствующая secondary-window protection остаётся независимой;
 - что quota preservation не получает скрытый приоритет над workflow pace;
 - что качество результата не снижается ради экономии allowance.
 
@@ -222,7 +222,7 @@ STOP IF
 - [ ] first-party assertions имеют источник;
 - [ ] behavior change закреплён regression test;
 - [ ] `SKILL.md` и normative references не противоречат друг другу;
-- [ ] `python3 scripts/validate_repo.py` проходит;
+- [ ] `python3 scripts/validate_repo_v4.py` проходит;
 - [ ] packaging проверен, если изменение затрагивает release path;
 - [ ] `VERSION` не изменён без причины;
 - [ ] существующий tag/release не перезаписывается.

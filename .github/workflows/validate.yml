@@ -13,5 +13,39 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Validate repository
-        run: python3 scripts/validate_repo.py
+      - name: Validate v4 repository
+        run: python3 scripts/validate_repo_v4.py
+      - name: Validate v4 adaptive routing
+        run: python3 scripts/validate_v4_routing.py
+      - name: Validate Plugin package contract
+        run: python3 scripts/validate_plugin_package.py
+      - name: Validate release contract
+        run: python3 scripts/validate_release_contract.py
+      - name: Validate release artifact round-trip
+        run: python3 scripts/package_release.py
+      - name: Validate quota Plugin backend
+        run: python3 plugin/quota_backend.py --self-test
+      - name: Validate sealed auth lifecycle
+        run: python3 plugin/sealed_auth_store.py
+      - name: Validate authorization coordinator
+        run: python3 plugin/authorization_coordinator.py
+      - name: Validate auth concurrency
+        run: python3 plugin/auth_concurrency.py
+      - name: Validate auth recovery
+        run: python3 plugin/auth_recovery.py
+      - name: Validate production vault adapter
+        run: python3 plugin/production_vault.py
+      - name: Validate production credential providers
+        run: python3 scripts/validate_production_providers.py
+      - name: Install pinned MCP SDK
+        run: python3 -m pip install --disable-pip-version-check -r plugin/requirements-mcp.txt
+      - name: Validate MCP transport
+        run: python3 plugin/mcp_transport.py --self-test
+      - name: Install pinned OAuth verifier dependencies
+        run: python3 -m pip install --disable-pip-version-check -r plugin/requirements-auth.txt
+      - name: Validate OIDC/JWKS token verifier
+        run: python3 plugin/oidc_token_verifier.py --self-test
+      - name: Validate IdP discovery preflight
+        run: python3 plugin/idp_preflight.py --self-test
+      - name: Validate production runtime composition
+        run: python3 plugin/production_runtime.py --self-test

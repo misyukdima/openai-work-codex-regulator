@@ -1,140 +1,74 @@
-# Architecture
+# Architecture — v4.0
 
-## v2.2 control plane
-
-```text
-User goal
-  ↓
-Regulator on current surface (normally Chat)
-  ↓
-class / surface / gate / WHY_AGENTIC
-  ↓
-shared Work/Codex allowance snapshot
-  ↓
-quota epoch + absolute cumulative trajectory
-  ↓
-model/effort + B_SAFE + hard quality/safety gates
-  ↓
-quota risk of launch  ↔  pace risk of defer
-          equal priority (50/50)
-  ↓
-LAUNCH_BASE / LAUNCH_WITH_ADVANCE /
-PROGRESS_ALTERNATIVE / DEFER
-  ↓
-self-contained executor packet
-  ↓
-Work or Codex executes without regulator dependency
-  ↓
-evidence + aggregate usage
-  ↓
-control plane updates project/quota state
-```
-
-## Control plane / execution plane separation
-
-v2.2 makes orchestration ownership explicit:
+## Control plane
 
 ```text
-CONTROL_PLANE_OWNER=<CHAT|WORK|CODEX>
-HANDOFF_SELF_CONTAINED=YES
-EXECUTOR_SKILL_REQUIRED=NO
+ChatGPT
+  ├─ task / quality classification
+  ├─ current quota snapshot
+  ├─ active-work-window runway
+  ├─ observed burn compatibility
+  ├─ surface selection
+  └─ model + reasoning admission
+          │
+     ┌────┴────┐
+     ▼         ▼
+    Work      Codex
+     └────┬────┘
+          ▼
+      evidence
+          ▼
+       ChatGPT
 ```
 
-The surface with the regulator resolves quota/model/admission. A downstream executor receives a complete bounded contract and never needs the regulator merely to understand the task.
+ChatGPT is the primary orchestrator. Work and Codex are execution planes. Handoffs are self-contained.
 
-Quota trajectory fields are control-plane state and are not copied into ordinary Work/Codex prompts.
-
-## Absolute weekly trajectory
-
-v2.1 used fixed 24h slices. v2.2 uses one epoch anchor:
+## Quota acquisition
 
 ```text
-U0 = weekly used at anchor
-H0 = hours to reset at anchor
+ChatGPT
+ -> connected read-only Regulator Plugin/App
+ -> authenticated server-side backend
+ -> official Codex app-server
+ -> account/rateLimits/read
+ -> normalized quota facts
 ```
 
-A deterministic cumulative target `T(H)` defines how much allowance could have been spent when `H` hours remain. Because all future decisions refer to the same anchor, recomputing after a pass cannot create another full daily budget.
+The backend has no admission authority. Missing fields remain unknown/absent.
 
-Normal launch headroom looks 24h forward:
+## Weekly runway
+
+v4 replaces raw wall-clock pacing with active working minutes. Default planning window is 09:00–23:00 local, with 22:00 as normal soft end; users can override schedule/days.
+
+One quota epoch is anchored to weekly used pp and active minutes remaining to weekly reset. Off-hours do not consume planned runway.
+
+Project-policy reserve, one-workday normal lookahead and two-workday bounded advance are described in references/14_WORK_SCHEDULE_RUNWAY.md.
+
+## Secondary quota windows
+
+No plan-wide five-hour assumption is hardcoded. A secondary window is enforced only when the current normalized account snapshot reports it. Different denominators remain separate.
+
+## Model router
+
+The router is quality-first:
 
 ```text
-BASE_LOOKAHEAD_HOURS = 24
-BASE_ACTION_HEADROOM_PP = T(H-24h) - actual_spend - reservations - meter_buffer
+required quality
+ -> minimum sufficient capability
+ -> minimum sufficient reasoning
+ -> available candidates
+ -> compatible observed burn/runway
+ -> launch
 ```
 
-Bounded future advance looks at most 72h forward:
+Capability failure and reasoning-depth failure are distinct. Product facts live in references/MODEL_CAPABILITY_SNAPSHOT.json; project routing policy lives in references/08_MODEL_REASONING_ROUTER.md.
 
-```text
-MAX_ADVANCE_HOURS = 72
-MAX_ADVANCE_HEADROOM_PP = T(H-72h) - actual_spend - reservations - meter_buffer
-```
+## Security inheritance
 
-The 24h quantity is therefore a pacing target, not a hard sleep timer.
+v4 inherits v3 development hardening: subject-isolated auth, sealed credential lifecycle, production-safe provider boundaries, OIDC/JWKS verification, exact read-only MCP tool surface, and hardened host crypto-helper socket semantics.
 
-## Balanced admission
+The static host credential key is not model-visible and repository code does not implement equivalent Python cryptography.
 
-Hard constraints first:
+## Packaging and CI
 
-```text
-safety
-permissions / authorization
-QUALITY_FLOOR=NON_NEGOTIABLE
-5h circuit breaker
-```
-
-Then equal priority:
-
-```text
-BALANCED_PRIORITY=QUOTA_50_PACE_50
-```
-
-If a pass needs future advance:
-
-```text
-QUOTA_RISK_IF_LAUNCH = needed_advance / borrowable_extra
-PACE_RISK_IF_DEFER = 0..1
-```
-
-Launch with advance when quota risk is no greater than pace risk and the pass remains inside the bounded advance horizon.
-
-This directly fixes the v2.1 failure mode where a pass just above the 24h envelope could force an idle day even while the project critical path was blocked.
-
-## Progress-preserving fallback
-
-If full agentic launch loses the balanced comparison, the regulator searches for useful work that does not consume the same shared pool before pure waiting: Chat planning/review/handoff, accepted-evidence reuse, quality-preserving split, independent work or an already-approved non-shared surface.
-
-## Two runways
-
-Project runway and quota runway remain separate. Failed attempts can preserve project gate count while still consuming aggregate allowance.
-
-## Model architecture
-
-```text
-MODEL_PROFILE=TIERED
-  MODEL_TIER=LUNA|TERRA|SOL
-
-MODEL_PROFILE=ASTRA
-  MODEL_TIER=N/A
-```
-
-Quota pressure cannot force a model below minimum sufficient quality.
-
-## Normative layers
-
-- `SKILL.md` — executable synthesis.
-- `references/01` — routing and control-plane ownership.
-- `references/02` — shared allowance / credits / reset facts.
-- `references/03` — class 0–4.
-- `references/04` — project runway / burn accounting.
-- `references/05` — Work/browser/actions/schedules.
-- `references/06` — Codex executor discipline.
-- `references/07` — failures/recovery.
-- `references/08` — model routing.
-- `references/09` — Astra execution.
-- `references/10` — balanced weekly quota + pace controller.
-- `references/11` — orchestration / self-contained handoff.
-- `references/SOURCE_MAP.md` — provenance.
-
-## Executable reference
-
-`scripts/weekly_quota_controller.py` implements the anchored trajectory, burn estimator and balanced admission. Repository validation imports it and runs deterministic self-tests.
+The root and packaged SKILL.md must remain byte-identical. v4 CI runs repository, routing, plugin, release-contract, auth, transport and production-provider checks. scripts/package_release.py validates source and clean unpacked ZIP before publication.

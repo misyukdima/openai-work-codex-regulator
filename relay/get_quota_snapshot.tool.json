@@ -1,0 +1,57 @@
+{
+  "name": "get_quota_snapshot",
+  "title": "Get Work/Codex quota snapshot",
+  "description": "Read the latest sanitized Work/Codex quota telemetry for the authenticated Regulator installation. This tool is read-only and performs no routing, admission, credit purchase, reset or account mutation.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": ["status"],
+    "properties": {
+      "status": {
+        "type": "string",
+        "enum": ["OK", "NO_SNAPSHOT", "NOT_CONNECTED", "ERROR"]
+      },
+      "relay_freshness": {
+        "type": ["string", "null"],
+        "enum": ["FRESH", "STALE", "UNKNOWN", null]
+      },
+      "relay_age_seconds": {
+        "type": ["number", "null"],
+        "minimum": 0
+      },
+      "received_at": {
+        "type": ["string", "null"]
+      },
+      "snapshot": {
+        "type": ["object", "null"],
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {"type": "integer", "const": 1},
+          "allowance_domain": {"type": "string", "const": "WORK_CODEX"},
+          "source": {"type": "string"},
+          "sensor": {"type": "string"},
+          "snapshot_at": {"type": ["string", "null"]},
+          "freshness": {"type": "string", "enum": ["FRESH", "STALE", "UNKNOWN"]},
+          "age_seconds": {"type": ["number", "null"], "minimum": 0},
+          "weekly_meter_semantics": {"type": "string", "enum": ["USED", "UNKNOWN"]},
+          "weekly_used": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+          "weekly_reset": {"type": ["string", "null"]},
+          "five_hour_used": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+          "five_hour_reset": {"type": ["string", "null"]},
+          "other_windows": {"type": "array"}
+        }
+      }
+    },
+    "additionalProperties": false
+  },
+  "security": {
+    "authentication": "server-side connected-app identity",
+    "model_visible_installation_id": false,
+    "model_visible_reader_token": false,
+    "read_only": true
+  }
+}

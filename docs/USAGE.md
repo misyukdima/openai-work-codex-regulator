@@ -1,200 +1,69 @@
-# Использование openai-work-codex-regulator v2.2
+# Использование openai-work-codex-regulator v4.0
 
-## 1. Базовый вызов
+v4.0 предназначен прежде всего для ChatGPT как control plane. Work и Codex получают self-contained execution packet и не обязаны загружать skill.
 
-```text
-Используй openai-work-codex-regulator.
-Сохраняй недельную Work/Codex квоту, но не останавливай critical path только из-за nominal 24h target.
-Квота и темп работы имеют равный приоритет после hard safety/quality gates.
-Задача: <описание>
-```
+## Быстрый старт
 
-## 2. Минимальный quota snapshot
+1. Установите release ZIP как skill в ChatGPT.
+2. Работайте с проектом обычным образом.
+3. Когда решение зависит от Work/Codex allowance, ChatGPT использует read-only get_quota_snapshot() при доступном подключении.
+4. Если автоматическая telemetry недоступна и без quota state нельзя безопасно решить следующий pass, допускается ручной first-party snapshot.
 
-```text
-Weekly used/remaining: <percent>
-Weekly reset: <timestamp/duration>
-5h used/reset: <если показано>
-Meter semantics: USED / REMAINING
-Meter granularity: <если известно>
-```
+По умолчанию дополнительной настройки после установки не требуется.
 
-Token/rate-card conversion не нужен.
+## Рабочее окно
 
-## 3. Что изменилось с v2.1
-
-v2.1 фиксировал 24h slice и мог выдать `DEFER_FOR_QUALITY`, если хороший pass был чуть дороже текущего slice.
-
-v2.2 использует absolute trajectory:
+Default local schedule:
 
 ```text
-one epoch anchor
-→ 24h normal look-ahead
-→ bounded 72h future advance
-→ quota risk vs pace risk
+09:00 start
+22:00 normal soft end
+23:00 hard end
+MON-SUN active
 ```
 
-Поэтому 24h больше не является обязательным ожиданием.
+Пользователь может явно задать другой диапазон и активные дни. Это schedule для распределения недельной квоты, а не лимит длительности задачи.
 
-## 4. Fresh-week reference
+## Quota behavior
 
-Для `U0=0`, `H0=168h`, zero reservations/buffer:
+Основной runway — weekly allowance до reset. Skill ориентируется на фактически нормализованный snapshot аккаунта.
+
+Если snapshot содержит weekly window и не содержит 5-hour/secondary window, v4 работает weekly-only. Отсутствующее окно не превращается в 0%, exhaustion или искусственный blocker.
+
+Если дополнительное окно реально присутствует, оно учитывается независимо; проценты разных окон не складываются.
+
+## Quality-first routing
+
+ChatGPT сначала определяет минимально достаточное качество, затем выбирает surface, capability и reasoning. Экономия применяется только среди кандидатов, которые уже проходят quality floor.
+
+Стартовая policy:
+- Luna Low — mechanical;
+- Luna Medium — routine;
+- Sol Medium — professional;
+- Sol High — complex reasoning-depth;
+- Astra Low/Medium — capability/breadth escalation;
+- Astra High — critical/high-error-cost.
+
+Current model picker/account state важнее статического snapshot.
+
+## Рабочий цикл
 
 ```text
-BASE_ACTION_HEADROOM_PP ≈ 12.8571
-MAX_ADVANCE_HEADROOM_PP ≈ 38.5714
+ChatGPT
+  -> understand gate
+  -> inspect quota when decision-sensitive
+  -> compute active-time runway
+  -> choose Work or Codex
+  -> choose sufficient model/reasoning
+  -> handoff
+  -> receive evidence
+  -> verify
+  -> refresh burn/quota when useful
+  -> next gate
 ```
 
-Первое — нормальный 24h target. Второе — абсолютный максимум bounded advance horizon, а не новый daily budget.
+## Safety
 
-## 5. Equal-priority admission
+Quota Plugin read-only. Skill не покупает credits, не выполняет paid reset, не расширяет permissions и не передаёт credentials downstream executor.
 
-Определить:
-
-```text
-PACE_RISK_IF_DEFER = NONE|LOW|MEDIUM|HIGH|CRITICAL
-```
-
-Соответствия:
-
-```text
-NONE=0.00
-LOW=0.25
-MEDIUM=0.50
-HIGH=0.75
-CRITICAL=1.00
-```
-
-Если pass помещается в normal 24h headroom → `LAUNCH_BASE`.
-
-Если требует future advance:
-
-```text
-QUOTA_RISK_IF_LAUNCH =
-  needed_advance / borrowable_extra
-```
-
-При:
-
-```text
-QUOTA_RISK_IF_LAUNCH <= PACE_RISK_IF_DEFER
-```
-
-и pass внутри max-advance horizon → `LAUNCH_WITH_ADVANCE`.
-
-## 6. Pace-risk examples
-
-- LOW — есть полезная независимая работа; сутки почти ничего не ломают.
-- MEDIUM — задержка создаёт rework/throughput penalty, но critical path не закрыт.
-- HIGH — gate блокирует дальнейшую реализацию или создаёт заметный idle window.
-- CRITICAL — incident/deadline/revenue/production/reputation window под риском.
-
-## 7. Если launch не проходит
-
-Не переходить сразу к ожиданию:
-
-1. убрать duplicate work/context;
-2. reuse accepted facts;
-3. quality-preserving split/batch;
-4. продолжить Chat planning/review/handoff;
-5. использовать уже разрешённый non-shared external tool;
-6. только затем defer.
-
-```text
-MEANINGFUL_PROGRESS_WITHOUT_AGENTIC=YES|NO|UNKNOWN
-```
-
-## 8. Chat → Codex handoff
-
-Если regulator работает в Chat:
-
-```text
-CONTROL_PLANE_OWNER=CHAT
-HANDOFF_SELF_CONTAINED=YES
-EXECUTOR_SKILL_REQUIRED=NO
-```
-
-Chat сам решает quota/model/admission. Codex получает готовый execution packet и не должен искать/загружать regulator.
-
-Не включать в обычный Codex prompt:
-
-```text
-QUOTA_EPOCH_ID
-trajectory headroom
-quota/pace risk
-paid-reset state
-```
-
-Передавать только goal/fact pack/scope/tests/rollback/stop conditions.
-
-## 9. Codex packet example
-
-```text
-PASS_ID: <id>
-SURFACE: CODEX
-ROLE: IMPL
-GATE: <one gate>
-MODE: BOUNDED_MUTATION
-STOP AFTER REPORT.
-
-GOAL:
-<goal>
-
-ROOT / REPO / ENVIRONMENT:
-<state>
-
-CONTEXT / FACT PACK:
-<accepted facts>
-
-READ SCOPE:
-<paths>
-
-WRITE SCOPE:
-<paths/actions>
-
-NO-TOUCH:
-<paths/services/secrets>
-
-ORDER:
-1. baseline
-2. minimal sufficient change
-3. tests
-4. diff
-5. report
-
-TESTS:
-<commands>
-
-ROLLBACK:
-<point>
-
-STOP IF:
-<drift/scope expansion/safety issue>
-```
-
-## 10. Direct Codex use
-
-Если skill установлен и прямо вызван внутри Codex, Codex может быть собственным `CONTROL_PLANE_OWNER`. Но последующие cross-surface handoffs всё равно self-contained.
-
-## 11. Pending meter
-
-`PENDING_BURN=YES` блокирует новый большой future advance до plausibly updated aggregate telemetry. Это не блокирует полезную Chat preparation/review.
-
-## 12. Quality and 5h
-
-`QUALITY_FLOOR=NON_NEGOTIABLE` и отдельный 5h circuit breaker стоят выше quota/pace balancing. Высокая срочность не разрешает insufficient model, missing tests или обход локального limit.
-
-## 13. Reference calculator
-
-```bash
-python3 scripts/weekly_quota_controller.py \
-  --anchor-weekly-used 0 \
-  --anchor-hours-to-reset 168 \
-  --hours-to-reset-now 168 \
-  --current-weekly-used 0 \
-  --samples 18,19,20 \
-  --pace-risk HIGH \
-  --self-test
-```
-
-Главная цель v2.2 — максимизировать устойчивый полезный прогресс в пределах недельной shared allowance, не отдавая автоматический приоритет ни экономии квоты, ни скорости процесса.
+Для mutation сохраняются точные target/write scope, rollback, tests и STOP_IF boundaries.

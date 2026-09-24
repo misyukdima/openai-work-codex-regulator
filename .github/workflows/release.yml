@@ -19,13 +19,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
-            echo "Releases may only be published from main."
-            exit 1
-          fi
+          test "$GITHUB_REF" = "refs/heads/main" || { echo "Releases may only be published from main."; exit 1; }
 
-      - name: Validate repository
-        run: python3 scripts/validate_repo.py
+      - name: Validate v4 repository
+        run: python3 scripts/validate_repo_v4.py
+      - name: Validate v4 adaptive routing
+        run: python3 scripts/validate_v4_routing.py
+      - name: Validate release contract
+        run: python3 scripts/validate_release_contract.py
+      - name: Validate Plugin package contract
+        run: python3 scripts/validate_plugin_package.py
 
       - name: Read version
         id: version
@@ -33,8 +36,8 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="$(tr -d '[:space:]' < VERSION)"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Fail closed if release or tag already exists
         env:
@@ -43,15 +46,8 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ steps.version.outputs.tag }}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release ${TAG} already exists. Releases are immutable: bump VERSION instead."
-            exit 1
-          fi
-          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
-            echo "Tag ${TAG} already exists on remote. Tags are immutable: bump VERSION instead."
-            exit 1
-          fi
-          echo "No existing release/tag ${TAG} — safe to publish."
+          if gh release view "$TAG" >/dev/null 2>&1; then exit 1; fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then exit 1; fi
 
       - name: Build and round-trip validate release artifact
         run: python3 scripts/package_release.py
@@ -62,7 +58,7 @@ jobs:
           set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
           cd dist
-          sha256sum "openai-work-codex-regulator-v${VERSION}.zip" > "openai-work-codex-regulator-v${VERSION}.zip.sha256"
+          sha256sum "openai-work-codex-regulator-v$VERSION.zip" > "openai-work-codex-regulator-v$VERSION.zip.sha256"
 
       - name: Prepare release notes
         shell: bash
@@ -70,15 +66,10 @@ jobs:
           set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
           {
-            echo "# openai-work-codex-regulator v${VERSION}"
+            echo "# openai-work-codex-regulator v$VERSION"
             echo
-            echo "Private release of the quota-aware ChatGPT Work / Codex regulator."
+            echo "Quota-aware ChatGPT orchestrator for Work and Codex."
             echo
-            echo "## Installation"
-            echo
-            echo "Download \`openai-work-codex-regulator-v${VERSION}.zip\`, unpack it into the skills directory, and keep \`openai-work-codex-regulator/SKILL.md\` as the entrypoint. See \`docs/USAGE.md\` in the repository for the full operating guide."
-            echo
-            echo "## Changes"
             awk -v v="$VERSION" '
               $0 ~ "^## " v " " {capture=1; next}
               capture && /^## / {exit}
@@ -86,7 +77,7 @@ jobs:
             ' CHANGELOG.md
           } > /tmp/release-notes.md
 
-      - name: Publish release for current version
+      - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -94,15 +85,9 @@ jobs:
           set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
           TAG="${{ steps.version.outputs.tag }}"
-          ZIP="dist/openai-work-codex-regulator-v${VERSION}.zip"
-          CHECKSUM="${ZIP}.sha256"
-
-          gh release create "$TAG" \
-            --target "$GITHUB_SHA" \
-            --title "openai-work-codex-regulator v${VERSION}" \
-            --notes-file /tmp/release-notes.md \
-            "$ZIP#Portable skill archive" \
-            "$CHECKSUM#SHA-256 checksum"
+          ZIP="dist/openai-work-codex-regulator-v$VERSION.zip"
+          CHECKSUM="$ZIP.sha256"
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "openai-work-codex-regulator v$VERSION" --notes-file /tmp/release-notes.md "$ZIP#Portable skill archive" "$CHECKSUM#SHA-256 checksum"
 
       - name: Verify published release
         env:
@@ -111,15 +96,11 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
-          TAG="${{ steps.version.outputs.tag }}"
-          ZIP="openai-work-codex-regulator-v${VERSION}.zip"
-          CHECKSUM="${ZIP}.sha256"
-
+          TAG="v$VERSION"
+          ZIP="openai-work-codex-regulator-v$VERSION.zip"
+          CHECKSUM="$ZIP.sha256"
           ASSETS="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
           grep -Fxq "$ZIP" <<<"$ASSETS"
           grep -Fxq "$CHECKSUM" <<<"$ASSETS"
-
-          TARGET="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha')"
+          TARGET="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq '.object.sha')"
           test "$TARGET" = "$GITHUB_SHA"
-
-          echo "Release ${TAG} verified at ${GITHUB_SHA} with both required assets."

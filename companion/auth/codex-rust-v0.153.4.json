@@ -1,0 +1,24 @@
+{
+  "provider": "OpenAI Codex CLI",
+  "version": "rust-v0.153.4",
+  "license": "Apache-2.0",
+  "repository": "https://github.com/openai/codex",
+  "release": "https://github.com/openai/codex/releases/tag/rust-v0.153.4",
+  "auth_transport": "app-server stdio JSONL",
+  "login_method": "account/login/start",
+  "completion_notification": "account/login/completed",
+  "artifacts": {
+    "macos-arm64": {
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.153.4/codex-aarch64-apple-darwin.tar.gz",
+      "sha256": "697c226da531028f661d7d44b971d58a7fc2f7d0382c3047f815c4d2d184f68f"
+    },
+    "macos-x86_64": {
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.153.4/codex-x86_64-apple-darwin.tar.gz",
+      "sha256": "d692b38766ced739f478473977de6435822a364a07bc8f1c405331e74f1fc48b"
+    }
+  },
+  "license_files": {
+    "license": "https://raw.githubusercontent.com/openai/codex/rust-v0.153.4/LICENSE",
+    "notice": "https://raw.githubusercontent.com/openai/codex/rust-v0.153.4/NOTICE"
+  }
+}

@@ -1,3 +1,5 @@
+> **Historical reference (v2/v3). Superseded for active v4 routing by [08_MODEL_REASONING_ROUTER.md](08_MODEL_REASONING_ROUTER.md). Do not use the TERRA/MODEL_PROFILE/MODEL_TIER policy for v4 decisions.**
+
 # Model profile and tier routing
 
 **Policy version:** v2.0  

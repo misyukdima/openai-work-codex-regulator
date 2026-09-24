@@ -1,0 +1,5 @@
+# Exact MCP transport pins for CI/deployment composition.
+# mcp==2.1.1 itself requires the matching mcp-types release; keep both explicit
+# so accidental resolver drift is visible in review.
+mcp==2.1.1
+mcp-types==2.1.1
