@@ -1,6 +1,6 @@
 # Regulator Quota Plugin backend
 
-Server-side read-only часть v3.0 для ChatGPT Web. Model-facing surface намеренно минимален:
+Server-side read-only часть v4.0 для ChatGPT Web. Model-facing surface намеренно минимален:
 
 ```text
 get_quota_snapshot()
@@ -274,7 +274,7 @@ Release gates:
 ```bash
 python3 scripts/validate_repo.py
 python3 scripts/validate_plugin_package.py
-python3 scripts/validate_v3_release_contract.py
+python3 scripts/validate_release_contract.py
 python3 plugin/quota_backend.py --self-test
 python3 plugin/subject_store.py
 python3 plugin/quota_service.py

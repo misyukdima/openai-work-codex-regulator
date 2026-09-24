@@ -1,3 +1,5 @@
+> **Historical reference (v2/v3). Superseded for active v4 routing by [08_MODEL_REASONING_ROUTER.md](08_MODEL_REASONING_ROUTER.md) and [MODEL_CAPABILITY_SNAPSHOT.json](MODEL_CAPABILITY_SNAPSHOT.json).**
+
 # Astra execution contract
 
 **Policy version:** v2.0  

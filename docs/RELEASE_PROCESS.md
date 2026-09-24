@@ -19,7 +19,7 @@ The repository uses `major.minor` skill versions.
 7. Run:
 
    ```bash
-   python3 scripts/validate_repo.py
+   python3 scripts/validate_repo_v4.py
    python3 scripts/package_release.py
    ```
 
