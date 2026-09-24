@@ -59,3 +59,30 @@ The production crypto socket lives in dedicated parent `/run/meciles-regulator-c
 
 ## Test 260 — production path invariants and fail-closed unprovisioned gates
 `HardenedAtomicFileBlobProvider`, `FlockSubjectLeaseProvider`, and `SystemdCredsEnvelopeCryptoProvider` verify their respective production filesystem paths, ownership, and mode before declaring `production_safe=True`. Unprovisioned or temporary test directories evaluate strictly to `production_safe=False`.
+
+## Test 261 — stat module import and production socket parent environment validation
+`CryptoHelperService` explicitly imports the standard `stat` module to decode filesystem modes in `validate_environment()`. When evaluating the production parent directory `/run/meciles-regulator-crypto/`, permission and ownership checks (`0750`, root-owned, GID matching `regulator`) execute without `NameError`.
+
+## Test 262 — client connection IO timeout enforcement
+The crypto helper applies a strict monotonic IO timeout of `CLIENT_IO_TIMEOUT_SECONDS` (15.0 seconds) to all accepted client connections via `client_sock.settimeout()`. Slow, hung, or partially transmitting clients trigger `socket.timeout`, closing the client socket cleanly without hanging the service loop or leaking resources.
+
+## Test 263 — CLI argument rejection and immutable production socket binding
+Direct CLI invocation of `deployment/crypto_helper.py` strictly binds to `PRODUCTION_SOCKET` (`/run/meciles-regulator-crypto/crypto.sock`). Providing any command-line arguments terminates execution immediately with return code 2, preventing unverified socket path redirection from shell invocation.
+
+## Test 264 — systemd-creds deterministic v257 non-interactive invocation
+Both encryption (`OP_SEAL`) and decryption (`OP_OPEN`) invocations of `/usr/bin/systemd-creds` strictly execute the exact supported argument arrays (`encrypt --with-key=host --name=<derived> - -` and `decrypt --name=<derived> - -`) with redirected standard I/O and a bounded subprocess timeout (10.0s). Each cryptographic request executes exactly one `/usr/bin/systemd-creds` subprocess without unsupported flags (`--no-ask-password`), speculative retries, or shell wrappers.
+
+## Test 265 — production regulator user identity resolution fail-closed
+In production mode (`is_production=True`), `CryptoHelperService` strictly requires user `regulator` to exist on the host system via `pwd.getpwnam("regulator")`. If the user is absent, initialization fails closed immediately with `RuntimeError`, never falling back to current process UID or root.
+
+## Test 266 — production socket permission and ownership enforcement fail-closed
+During socket binding in production mode, `CryptoHelperService` applies `0660` permissions owned by `0:socket_gid` (`root:regulator`). Any `OSError` during `chown` or `chmod` immediately raises `RuntimeError`. Following permission assignment, filesystem metadata is re-verified via `os.lstat()`, failing closed if permissions or ownership do not match exactly.
+
+## Test 267 — safe startup pre-existing socket cleanup with lstat validation
+Before binding, `CryptoHelperService` inspects any pre-existing path at the socket location using `os.lstat()`. In production mode, the service verifies that the existing object is strictly a socket (`stat.S_ISSOCK`), owned by `root:regulator`. Pre-existing regular files, directories, symlinks, or sockets owned by unauthorized UIDs trigger `RuntimeError` and are never unlinked.
+
+## Test 268 — safe shutdown socket cleanup with device and inode verification
+Upon successful socket creation and binding, `CryptoHelperService` records the filesystem device and inode `(st_dev, st_ino)`. During graceful shutdown or signal handling, the service verifies via `os.lstat()` that the socket path still references the exact recorded device and inode before unlinking, preventing removal of substituted paths.
+
+## Test 269 — test constructor allowed UID override isolation from production mode
+`CryptoHelperService` supports constructor injection of `allowed_uid_override` strictly in non-production test harnesses with ephemeral socket paths. If `allowed_uid_override` is supplied while targeting `PRODUCTION_SOCKET`, initialization fails closed immediately with `ValueError`.

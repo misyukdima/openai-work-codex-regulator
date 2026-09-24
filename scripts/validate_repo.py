@@ -513,6 +513,8 @@ for needle in [
     "/usr/bin/systemd-creds",
     "SO_PEERCRED",
     "CryptoHelperService",
+    "CLIENT_IO_TIMEOUT_SECONDS",
+    "_socket_inode",
 ]:
     if needle not in crypto_helper:
         errors.append(f"crypto helper missing marker: {needle}")
@@ -532,6 +534,13 @@ for rel, content in [
     ]:
         if forbidden in content:
             errors.append(f"{rel} contains forbidden crypto import/primitive: {forbidden}")
+
+for forbidden in [
+    "--no-ask-password",
+    "cmd_compat",
+]:
+    if forbidden in crypto_helper:
+        errors.append(f"crypto helper contains forbidden option/retry: {forbidden}")
 
 
 def run_module_self_test(path: Path, module_name: str, label: str) -> None:

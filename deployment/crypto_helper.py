@@ -20,6 +20,7 @@ from pathlib import Path
 import pwd
 import signal
 import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -30,6 +31,9 @@ import time
 PRODUCTION_SOCKET = Path("/run/meciles-regulator-crypto/crypto.sock")
 PRODUCTION_PARENT = Path("/run/meciles-regulator-crypto")
 SYSTEMD_CREDS_PATH = "/usr/bin/systemd-creds"
+
+# Socket and IO Bounds
+CLIENT_IO_TIMEOUT_SECONDS = 15.0
 
 # Asymmetric Size Limits
 MAX_AUTH_BLOB_BYTES = 1024 * 1024       # 1 MiB (max plaintext auth.json)
@@ -91,20 +95,44 @@ def send_response(sock: socket.socket, status: int, data: bytes = b"") -> None:
 class CryptoHelperService:
     """Root-only IPC service delegating credential operations to systemd-creds."""
 
-    def __init__(self, socket_path: Path = PRODUCTION_SOCKET) -> None:
+    def __init__(
+        self,
+        socket_path: Path = PRODUCTION_SOCKET,
+        allowed_uid_override: int | None = None,
+        client_timeout: float = CLIENT_IO_TIMEOUT_SECONDS,
+    ) -> None:
         self.socket_path = Path(socket_path).resolve()
-        self.is_production = (self.socket_path == PRODUCTION_SOCKET)
+        self.is_production = (self.socket_path == PRODUCTION_SOCKET.resolve())
+        self.client_timeout = float(client_timeout)
         self.running = False
         self._server_sock: socket.socket | None = None
+        self._socket_inode: tuple[int, int] | None = None
 
-        try:
-            reg_pwd = pwd.getpwnam("regulator")
-            self.allowed_uid = reg_pwd.pw_uid
-            self.socket_gid = reg_pwd.pw_gid
-        except KeyError:
-            # In test environments fallback gracefully if user not present
-            self.allowed_uid = os.getuid()
-            self.socket_gid = os.getgid()
+        if self.is_production:
+            if allowed_uid_override is not None:
+                raise ValueError("allowed_uid_override is strictly forbidden in production mode")
+            try:
+                reg_pwd = pwd.getpwnam("regulator")
+                self.allowed_uid = reg_pwd.pw_uid
+                self.socket_gid = reg_pwd.pw_gid
+            except KeyError:
+                raise RuntimeError("User 'regulator' not found on system (required for production mode)")
+        else:
+            if allowed_uid_override is not None:
+                self.allowed_uid = int(allowed_uid_override)
+                try:
+                    reg_pwd = pwd.getpwnam("regulator")
+                    self.socket_gid = reg_pwd.pw_gid
+                except KeyError:
+                    self.socket_gid = os.getgid()
+            else:
+                try:
+                    reg_pwd = pwd.getpwnam("regulator")
+                    self.allowed_uid = reg_pwd.pw_uid
+                    self.socket_gid = reg_pwd.pw_gid
+                except KeyError:
+                    self.allowed_uid = os.getuid()
+                    self.socket_gid = os.getgid()
 
     def validate_environment(self) -> None:
         """Validate production socket parent directory security invariants."""
@@ -112,12 +140,12 @@ class CryptoHelperService:
             return
 
         parent = self.socket_path.parent
-        if parent != PRODUCTION_PARENT:
+        if parent != PRODUCTION_PARENT.resolve():
             raise RuntimeError(f"Invalid production socket parent: {parent}")
         if not parent.is_dir() or parent.is_symlink():
             raise RuntimeError(f"Production socket parent {parent} is not a regular directory")
 
-        st = os.stat(parent)
+        st = os.lstat(parent)
         if st.st_uid != 0:
             raise RuntimeError(f"Production socket parent must be root-owned (UID 0), got {st.st_uid}")
         if stat.S_IMODE(st.st_mode) != 0o750:
@@ -128,6 +156,8 @@ class CryptoHelperService:
     def handle_connection(self, client_sock: socket.socket) -> None:
         """Process one client connection with peer validation and systemd-creds execution."""
         try:
+            client_sock.settimeout(self.client_timeout)
+
             # SO_PEERCRED verification
             creds = client_sock.getsockopt(socket.SOL_SOCKET, SO_PEERCRED, 12)
             _, client_uid, _ = struct.unpack("iII", creds)
@@ -170,11 +200,24 @@ class CryptoHelperService:
             payload = _recvall(client_sock, payload_len)
 
             # Invoke /usr/bin/systemd-creds with argument array (shell=False)
-            # Note: systemd-creds runs non-interactively when standard input/output are redirected.
+            # Note: systemd-creds runs non-interactively with redirected standard input/output.
             if op == OP_SEAL:
-                cmd = [SYSTEMD_CREDS_PATH, "encrypt", "--with-key=host", f"--name={derived_name}", "-", "-"]
+                cmd = [
+                    SYSTEMD_CREDS_PATH,
+                    "encrypt",
+                    "--with-key=host",
+                    f"--name={derived_name}",
+                    "-",
+                    "-",
+                ]
             else:
-                cmd = [SYSTEMD_CREDS_PATH, "decrypt", f"--name={derived_name}", "-", "-"]
+                cmd = [
+                    SYSTEMD_CREDS_PATH,
+                    "decrypt",
+                    f"--name={derived_name}",
+                    "-",
+                    "-",
+                ]
 
             env = {"PATH": "/usr/bin:/bin", "LC_ALL": "C"}
             proc = subprocess.run(
@@ -202,7 +245,7 @@ class CryptoHelperService:
 
             send_response(client_sock, STATUS_OK, out_data)
 
-        except (ConnectionError, struct.error):
+        except (ConnectionError, struct.error, socket.timeout):
             pass
         except subprocess.TimeoutExpired:
             send_response(client_sock, STATUS_CRYPTO_ERROR)
@@ -218,21 +261,45 @@ class CryptoHelperService:
         """Start listening loop and handle graceful termination."""
         self.validate_environment()
 
-        if self.socket_path.exists():
+        if os.path.lexists(self.socket_path):
+            if self.is_production:
+                st = os.lstat(self.socket_path)
+                if not stat.S_ISSOCK(st.st_mode):
+                    raise RuntimeError(f"Pre-existing path at {self.socket_path} is not a socket")
+                if st.st_uid != 0 or st.st_gid != self.socket_gid:
+                    raise RuntimeError(
+                        f"Pre-existing socket {self.socket_path} has unsafe ownership (UID {st.st_uid}, GID {st.st_gid})"
+                    )
             try:
                 self.socket_path.unlink()
-            except OSError:
-                pass
+            except OSError as exc:
+                if self.is_production:
+                    raise RuntimeError(f"Failed to unlink pre-existing socket {self.socket_path}: {exc}") from exc
 
         self._server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self._server_sock.bind(str(self.socket_path))
+
+        sock_st = os.lstat(self.socket_path)
+        self._socket_inode = (sock_st.st_dev, sock_st.st_ino)
 
         # Apply ownership and mode: root:regulator 0660
         try:
             os.chown(self.socket_path, 0, self.socket_gid)
             os.chmod(self.socket_path, 0o660)
-        except OSError:
-            pass
+        except OSError as exc:
+            if self.is_production:
+                raise RuntimeError(f"Failed to set production socket permissions: {exc}") from exc
+
+        if self.is_production:
+            st_post = os.lstat(self.socket_path)
+            if st_post.st_uid != 0 or st_post.st_gid != self.socket_gid:
+                raise RuntimeError(
+                    f"Production socket ownership verification failed: UID {st_post.st_uid}, GID {st_post.st_gid}"
+                )
+            if stat.S_IMODE(st_post.st_mode) != 0o660:
+                raise RuntimeError(
+                    f"Production socket mode verification failed: {oct(stat.S_IMODE(st_post.st_mode))}"
+                )
 
         self._server_sock.listen(16)
         self._server_sock.settimeout(1.0)
@@ -241,8 +308,11 @@ class CryptoHelperService:
         def _sig_handler(signum: int, frame: object) -> None:
             self.running = False
 
-        signal.signal(signal.SIGTERM, _sig_handler)
-        signal.signal(signal.SIGINT, _sig_handler)
+        try:
+            signal.signal(signal.SIGTERM, _sig_handler)
+            signal.signal(signal.SIGINT, _sig_handler)
+        except (ValueError, AttributeError):
+            pass
 
         try:
             while self.running:
@@ -259,16 +329,20 @@ class CryptoHelperService:
                     self._server_sock.close()
                 except OSError:
                     pass
-            if self.socket_path.exists():
+            if os.path.lexists(self.socket_path):
                 try:
-                    self.socket_path.unlink()
+                    curr_st = os.lstat(self.socket_path)
+                    if self._socket_inode is not None and (curr_st.st_dev, curr_st.st_ino) == self._socket_inode:
+                        self.socket_path.unlink()
                 except OSError:
                     pass
 
 
 def main() -> None:
-    socket_override = sys.argv[1] if len(sys.argv) > 1 else str(PRODUCTION_SOCKET)
-    helper = CryptoHelperService(socket_path=Path(socket_override))
+    if len(sys.argv) > 1:
+        sys.stderr.write("Usage: crypto_helper.py (CLI socket overrides forbidden in production)\n")
+        sys.exit(2)
+    helper = CryptoHelperService(socket_path=PRODUCTION_SOCKET)
     helper.run()
 
 
