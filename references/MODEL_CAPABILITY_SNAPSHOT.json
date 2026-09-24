@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "catalog_id": "openai-model-capabilities-2026-09-24",
+  "verified_at": "2026-09-24",
+  "release_target": "4.0",
+  "notes": [
+    "Availability is plan/workspace/rollout dependent; current picker wins.",
+    "Shared-allowance burn is not derived from API token pricing.",
+    "Missing secondary quota windows are not synthesized."
+  ],
+  "models": [
+    {
+      "model_id": "gpt-6-astra",
+      "alias": "ASTRA",
+      "family": "GPT6",
+      "positioning": "most capable model for hardest end-to-end work",
+      "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"],
+      "default_reasoning": "unknown",
+      "surfaces": ["WORK", "CODEX", "API"],
+      "plus_work_codex": "available_limited_subject_to_account_rollout",
+      "context_window": 1050000,
+      "max_output_tokens": 128000
+    },
+    {
+      "model_id": "gpt-6-sol",
+      "alias": "SOL",
+      "family": "GPT6",
+      "positioning": "complex coding and agentic workflows; everyday work requiring judgment",
+      "reasoning_efforts": ["none", "low", "medium", "high", "xhigh", "max"],
+      "default_reasoning": "medium",
+      "surfaces": ["WORK", "CODEX", "API"],
+      "plus_work_codex": "available_subject_to_account_rollout",
+      "context_window": 1050000,
+      "max_output_tokens": 128000
+    },
+    {
+      "model_id": "gpt-6-luna",
+      "alias": "LUNA",
+      "family": "GPT6",
+      "positioning": "efficient focused high-volume work",
+      "reasoning_efforts": ["none", "low", "medium", "high", "xhigh", "max"],
+      "default_reasoning": "medium",
+      "surfaces": ["WORK", "CODEX", "API"],
+      "plus_work_codex": "available_subject_to_account_rollout",
+      "context_window": 1050000,
+      "max_output_tokens": 128000
+    }
+  ],
+  "quota_contract": {
+    "allowance_domain": "WORK_CODEX",
+    "weekly_window": "primary_runway",
+    "secondary_windows": "derive_from_current_snapshot",
+    "missing_secondary_window": "not_applicable_from_current_snapshot",
+    "hardcoded_plan_window_assumptions": false
+  },
+  "sources": [
+    {"url":"https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex","volatility":"HIGH"},
+    {"url":"https://developers.openai.com/api/docs/guides/model-selection","volatility":"MEDIUM"},
+    {"url":"https://developers.openai.com/api/docs/models/gpt-6-astra","volatility":"MEDIUM"},
+    {"url":"https://developers.openai.com/api/docs/models/gpt-6-sol","volatility":"MEDIUM"},
+    {"url":"https://developers.openai.com/api/docs/models/gpt-6-luna","volatility":"MEDIUM"},
+    {"url":"https://help.openai.com/en/articles/11369540-using-codex-with-your-chatgpt-plan","volatility":"HIGH"}
+  ]
+}
